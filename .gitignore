@@ -1,0 +1,10 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environment directories
+.venv/
+venv/
+
+# Environment variable files
+.env

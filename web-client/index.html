@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>AI助手 - 平板联调页</title>
+    <link rel="stylesheet" href="./css/common.css" />
+    <link rel="stylesheet" href="./css/app.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="panel">
+        <h1 class="title">AI助手联调面板</h1>
+        <p class="subtitle">用于验证 WebSocket 协议消息与平板端显示联动</p>
+      </header>
+
+      <section class="panel">
+        <h2 class="section-title">连接配置</h2>
+        <div class="grid">
+          <label class="field">
+            <span>WebSocket 地址</span>
+            <input id="wsUrlInput" type="text" value="ws://127.0.0.1:8765" />
+          </label>
+          <label class="field">
+            <span>Token（可选）</span>
+            <input id="tokenInput" type="text" value="" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="connectBtn" type="button">连接</button>
+          <button id="disconnectBtn" type="button">断开</button>
+        </div>
+        <div id="statusText" class="status">状态：未连接</div>
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">发送文本指令</h2>
+        <div class="actions">
+          <input id="textInput" class="grow" type="text" placeholder="例如：播放 稻香 / 第2首 / 这首歌好听 / 换成运动风" />
+          <button id="sendTextBtn" type="button">发送</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">Live2D 模型区（MODEL_SWITCH）</h2>
+        <div id="modelText" class="muted">当前模型：未加载</div>
+        <div id="live2dContainer" class="live2d-container"></div>
+        <div class="mouth-meter">
+          <span>口型系数：</span>
+          <div class="mouth-bar">
+            <div id="mouthBarInner" class="mouth-bar-inner"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">二维码显示（QRCODE）</h2>
+        <div id="qrText" class="muted">暂无二维码</div>
+        <img id="qrImage" class="qr-image hidden" alt="二维码" />
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">音频播放（AUDIO_URL）</h2>
+        <audio id="audioPlayer" controls preload="none" class="audio-player"></audio>
+        <div id="audioText" class="muted">暂无播放链接</div>
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">视觉效果（EFFECT）</h2>
+        <div id="effectText" class="muted">暂无特效</div>
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">天气卡片（WEATHER_CARD）</h2>
+        <div id="weatherText" class="muted">暂无天气数据</div>
+        <div id="weatherCards" class="weather-cards"></div>
+      </section>
+
+      <section class="panel">
+        <h2 class="section-title">消息日志</h2>
+        <pre id="logBox" class="log-box"></pre>
+      </section>
+    </div>
+
+    <div id="heartEffect" class="heart-effect hidden">❤</div>
+
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+    <script src="./js/app.js"></script>
+  </body>
+  </html>

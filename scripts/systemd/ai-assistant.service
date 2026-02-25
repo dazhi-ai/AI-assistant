@@ -1,0 +1,15 @@
+[Unit]
+Description=AI Assistant WebSocket Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/ai-assistant
+EnvironmentFile=/opt/ai-assistant/.env
+ExecStart=/opt/ai-assistant/.venv/bin/python /opt/ai-assistant/main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

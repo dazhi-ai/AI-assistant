@@ -1,0 +1,22 @@
+[Unit]
+Description=Netease Cloud Music API Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/NeteaseCloudMusicApi
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+EnvironmentFile=-/etc/default/netease-api
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=3
+TimeoutStartSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

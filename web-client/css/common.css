@@ -1,0 +1,67 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+  background: #10131a;
+  color: #e7ecf3;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.muted {
+  color: #9aa4b2;
+}
+
+.panel {
+  background: #171c26;
+  border: 1px solid #2a3243;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.section-title {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field input,
+.actions input {
+  width: 100%;
+  border: 1px solid #334056;
+  border-radius: 8px;
+  background: #0f141d;
+  color: #e7ecf3;
+  padding: 9px 10px;
+}
+
+button {
+  border: 1px solid #3b77ff;
+  border-radius: 8px;
+  background: #2f62d6;
+  color: #ffffff;
+  cursor: pointer;
+  padding: 9px 12px;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
