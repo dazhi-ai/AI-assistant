@@ -8,3 +8,10 @@ venv/
 
 # Environment variable files
 .env
+
+# Frontend dependencies and build artifacts
+web-client/node_modules/
+web-client/dist/
+
+# OS generated files
+Thumbs.db
