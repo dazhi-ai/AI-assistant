@@ -43,6 +43,8 @@ class Settings:
     volc_app_id: str
     volc_access_token: str
     volc_secret_key: str
+    volc_asr_ws_url: str
+    volc_tts_ws_url: str
     asr_provider: str
     asr_base_url: str
     asr_api_key: str
@@ -87,7 +89,8 @@ def load_settings() -> Settings:
     tts_voice = os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
     tts_rate = os.getenv("TTS_RATE", "+0%")
     tts_volume = os.getenv("TTS_VOLUME", "+0%")
-    tts_provider = os.getenv("TTS_PROVIDER", "edge").strip().lower()
+    tts_provider_raw = os.getenv("TTS_PROVIDER", "edge").strip().lower()
+    tts_provider = "volc" if tts_provider_raw in {"volcengine", "volc"} else tts_provider_raw
     tts_volc_base_url = os.getenv("TTS_VOLC_BASE_URL", "")
     tts_volc_voice_type = os.getenv("TTS_VOLC_VOICE_TYPE", "BV001_streaming")
     tts_volc_cluster = os.getenv("TTS_VOLC_CLUSTER", "volcano_tts")
@@ -99,13 +102,19 @@ def load_settings() -> Settings:
     volc_app_id = os.getenv("VOLC_APP_ID", "")
     volc_access_token = os.getenv("VOLC_ACCESS_TOKEN", "")
     volc_secret_key = os.getenv("VOLC_SECRET_KEY", "")
-    asr_provider = os.getenv("ASR_PROVIDER", "openai").strip().lower()
+    volc_asr_ws_url = os.getenv("VOLC_ASR_WS_URL", "wss://openspeech.bytedance.com/api/v2/asr")
+    volc_tts_ws_url = os.getenv("VOLC_TTS_WS_URL", "wss://openspeech.bytedance.com/api/v3/tts/bidirection")
+    asr_provider_raw = os.getenv("ASR_PROVIDER", "openai").strip().lower()
+    asr_provider = "volc" if asr_provider_raw in {"volcengine", "volc"} else asr_provider_raw
     asr_base_url = os.getenv("ASR_BASE_URL", "https://api.openai.com/v1/audio/transcriptions")
     asr_api_key = os.getenv("ASR_API_KEY", "")
     asr_app_id = os.getenv("ASR_APP_ID", "")
     asr_access_token = os.getenv("ASR_ACCESS_TOKEN", "")
     asr_secret_key = os.getenv("ASR_SECRET_KEY", "")
-    asr_auth_style = os.getenv("ASR_AUTH_STYLE", "auto").strip().lower()
+    asr_auth_style_raw = os.getenv("ASR_AUTH_STYLE", "auto").strip().lower()
+    asr_auth_style = "bearer_semicolon" if asr_auth_style_raw == "token" else asr_auth_style_raw
+    if asr_provider == "volc" and asr_base_url.strip().lower() == "auto":
+        asr_base_url = "https://openspeech.bytedance.com/api/v2/asr"
     asr_model = os.getenv("ASR_MODEL", "whisper-1")
     asr_language = os.getenv("ASR_LANGUAGE", "zh")
     asr_max_audio_bytes = int(os.getenv("ASR_MAX_AUDIO_BYTES", "10485760"))
@@ -143,6 +152,8 @@ def load_settings() -> Settings:
         volc_app_id=volc_app_id,
         volc_access_token=volc_access_token,
         volc_secret_key=volc_secret_key,
+        volc_asr_ws_url=volc_asr_ws_url,
+        volc_tts_ws_url=volc_tts_ws_url,
         asr_provider=asr_provider,
         asr_base_url=asr_base_url,
         asr_api_key=asr_api_key,

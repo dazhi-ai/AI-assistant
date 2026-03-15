@@ -16,6 +16,9 @@ class ASRService:
     def __init__(self, settings: Settings) -> None:
         self._provider = settings.asr_provider
         self._base_url = settings.asr_base_url
+        if self._provider == "volc" and (self._base_url.startswith("wss://") or self._base_url.startswith("ws://")):
+            # Keep compatibility for users who paste websocket URL in ASR_BASE_URL.
+            self._base_url = self._base_url.replace("wss://", "https://").replace("ws://", "http://", 1)
         self._api_key = settings.asr_api_key
         self._app_id = settings.asr_app_id or settings.volc_app_id
         self._access_token = settings.asr_access_token or settings.volc_access_token
