@@ -1,6 +1,7 @@
 """WebSocket gateway with auth, heartbeat, and tool orchestration."""
 
 import asyncio
+import base64
 import logging
 import re
 
@@ -11,6 +12,7 @@ from plugins.netease_cloud import NeteaseCloudController
 from plugins.weather_service import WeatherService
 from src.ark_client import ArkClient
 from src.assistant_service import AssistantService
+from src.asr_service import ASRService
 from src.config import Settings
 from src.protocol import build_message, parse_message
 from src.tool_handler import ToolHandler
@@ -73,17 +75,95 @@ async def _stream_tts_to_client(
     )
 
 
+async def _handle_user_text(
+    websocket: ServerConnection,
+    assistant: AssistantService,
+    tts_service: TTSService,
+    session_id: str,
+    user_text: str,
+    trace_id: str,
+) -> None:
+    """Process one user text through assistant/tooling and emit all events."""
+    process_result = await assistant.process_user_text(session_id=session_id, user_text=user_text)
+    await _send_message(
+        websocket,
+        "TEXT",
+        {"text": process_result["assistant_text"]},
+        trace_id=trace_id,
+    )
+    model_switch = _detect_model_switch(user_text)
+    if model_switch:
+        await _send_message(
+            websocket,
+            "MODEL_SWITCH",
+            model_switch,
+            trace_id=trace_id,
+        )
+    for tool_result in process_result["tool_results"]:
+        await _send_message(
+            websocket,
+            "TOOL_RESULT",
+            tool_result,
+            trace_id=trace_id,
+        )
+        if tool_result["name"] == "like_music" and tool_result["result"].get("ok"):
+            await _send_message(
+                websocket,
+                "EFFECT",
+                {"action": "HEART"},
+                trace_id=trace_id,
+            )
+        if tool_result["name"] == "get_netease_login_qrcode" and tool_result["result"].get("ok"):
+            await _send_message(
+                websocket,
+                "QRCODE",
+                {
+                    "unikey": tool_result["result"].get("unikey", ""),
+                    "qrurl": tool_result["result"].get("qrurl", ""),
+                    "qrimg": tool_result["result"].get("qrimg", ""),
+                },
+                trace_id=trace_id,
+            )
+        if tool_result["name"] == "play_music" and tool_result["result"].get("ok"):
+            await _send_message(
+                websocket,
+                "AUDIO_URL",
+                {"url": tool_result["result"].get("url", "")},
+                trace_id=trace_id,
+            )
+        if tool_result["name"] == "get_weather_forecast" and tool_result["result"].get("ok"):
+            await _send_message(
+                websocket,
+                "WEATHER_CARD",
+                {
+                    "city": tool_result["result"].get("city", ""),
+                    "adm1": tool_result["result"].get("adm1", ""),
+                    "adm2": tool_result["result"].get("adm2", ""),
+                    "forecast": tool_result["result"].get("forecast", []),
+                },
+                trace_id=trace_id,
+            )
+    await _stream_tts_to_client(
+        websocket=websocket,
+        tts_service=tts_service,
+        text=process_result["assistant_text"],
+        trace_id=trace_id,
+    )
+
+
 async def handle_client(
     websocket: ServerConnection,
     settings: Settings,
     assistant: AssistantService,
     tts_service: TTSService,
+    asr_service: ASRService,
 ) -> None:
     """Handle one client connection using protocol-based events."""
     logger.info("Client connected")
     session_id = str(id(websocket))
     authed = settings.ws_token == ""
     audio_input_chunk_count = 0
+    audio_input_bytes = bytearray()
     try:
         async for raw_message in websocket:
             if not isinstance(raw_message, str):
@@ -118,22 +198,89 @@ async def handle_client(
                 continue
 
             if message.type == "AUDIO_INPUT_CHUNK":
-                # Hardware path placeholder: chunk will feed ASR pipeline in next iteration.
+                chunk_base64 = str(message.payload.get("chunk_base64", ""))
+                if not chunk_base64:
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "BAD_AUDIO_CHUNK", "message": "payload.chunk_base64 is required."},
+                        trace_id=message.trace_id,
+                    )
+                    continue
+                try:
+                    chunk_bytes = base64.b64decode(chunk_base64, validate=True)
+                except Exception:  # noqa: BLE001
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "BAD_AUDIO_CHUNK", "message": "chunk_base64 is not valid base64."},
+                        trace_id=message.trace_id,
+                    )
+                    continue
+                audio_input_bytes.extend(chunk_bytes)
                 audio_input_chunk_count += 1
+                if len(audio_input_bytes) > asr_service.max_audio_bytes:
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {
+                            "code": "AUDIO_TOO_LARGE",
+                            "message": f"Audio input exceeded {asr_service.max_audio_bytes} bytes limit.",
+                        },
+                        trace_id=message.trace_id,
+                    )
+                    audio_input_bytes.clear()
+                    audio_input_chunk_count = 0
                 continue
 
             if message.type == "AUDIO_INPUT_END":
+                if audio_input_chunk_count <= 0:
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "AUDIO_EMPTY", "message": "No AUDIO_INPUT_CHUNK received before AUDIO_INPUT_END."},
+                        trace_id=message.trace_id,
+                    )
+                    continue
+                asr_result = await asr_service.transcribe(bytes(audio_input_bytes))
+                if not asr_result.get("ok"):
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "ASR_FAILED", "message": asr_result.get("error", "Unknown ASR error")},
+                        trace_id=message.trace_id,
+                    )
+                    audio_input_bytes.clear()
+                    audio_input_chunk_count = 0
+                    continue
+                user_text_from_audio = asr_result.get("text", "").strip()
                 await _send_message(
                     websocket,
-                    "TEXT",
+                    "ASR_RESULT",
                     {
-                        "text": (
-                            "已收到音频输入，但当前版本尚未接入实时 ASR。"
-                            f"本次累计分片: {audio_input_chunk_count}"
-                        )
+                        "text": user_text_from_audio,
+                        "chunks": audio_input_chunk_count,
+                        "bytes": len(audio_input_bytes),
                     },
                     trace_id=message.trace_id,
                 )
+                if user_text_from_audio:
+                    await _handle_user_text(
+                        websocket=websocket,
+                        assistant=assistant,
+                        tts_service=tts_service,
+                        session_id=session_id,
+                        user_text=user_text_from_audio,
+                        trace_id=message.trace_id,
+                    )
+                else:
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "ASR_EMPTY", "message": "ASR returned empty text."},
+                        trace_id=message.trace_id,
+                    )
+                audio_input_bytes.clear()
                 audio_input_chunk_count = 0
                 continue
 
@@ -147,69 +294,12 @@ async def handle_client(
                         trace_id=message.trace_id,
                     )
                     continue
-                process_result = await assistant.process_user_text(session_id=session_id, user_text=user_text)
-                await _send_message(
-                    websocket,
-                    "TEXT",
-                    {"text": process_result["assistant_text"]},
-                    trace_id=message.trace_id,
-                )
-                model_switch = _detect_model_switch(user_text)
-                if model_switch:
-                    await _send_message(
-                        websocket,
-                        "MODEL_SWITCH",
-                        model_switch,
-                        trace_id=message.trace_id,
-                    )
-                for tool_result in process_result["tool_results"]:
-                    await _send_message(
-                        websocket,
-                        "TOOL_RESULT",
-                        tool_result,
-                        trace_id=message.trace_id,
-                    )
-                    if tool_result["name"] == "like_music" and tool_result["result"].get("ok"):
-                        await _send_message(
-                            websocket,
-                            "EFFECT",
-                            {"action": "HEART"},
-                            trace_id=message.trace_id,
-                        )
-                    if tool_result["name"] == "get_netease_login_qrcode" and tool_result["result"].get("ok"):
-                        await _send_message(
-                            websocket,
-                            "QRCODE",
-                            {
-                                "unikey": tool_result["result"].get("unikey", ""),
-                                "qrurl": tool_result["result"].get("qrurl", ""),
-                                "qrimg": tool_result["result"].get("qrimg", ""),
-                            },
-                            trace_id=message.trace_id,
-                        )
-                    if tool_result["name"] == "play_music" and tool_result["result"].get("ok"):
-                        await _send_message(
-                            websocket,
-                            "AUDIO_URL",
-                            {"url": tool_result["result"].get("url", "")},
-                            trace_id=message.trace_id,
-                        )
-                    if tool_result["name"] == "get_weather_forecast" and tool_result["result"].get("ok"):
-                        await _send_message(
-                            websocket,
-                            "WEATHER_CARD",
-                            {
-                                "city": tool_result["result"].get("city", ""),
-                                "adm1": tool_result["result"].get("adm1", ""),
-                                "adm2": tool_result["result"].get("adm2", ""),
-                                "forecast": tool_result["result"].get("forecast", []),
-                            },
-                            trace_id=message.trace_id,
-                        )
-                await _stream_tts_to_client(
+                await _handle_user_text(
                     websocket=websocket,
+                    assistant=assistant,
                     tts_service=tts_service,
-                    text=process_result["assistant_text"],
+                    session_id=session_id,
+                    user_text=user_text,
                     trace_id=message.trace_id,
                 )
                 continue
@@ -236,18 +326,24 @@ async def start_server(settings: Settings) -> None:
         timeout_seconds=settings.request_timeout_seconds,
     )
     await netease.connect()
+    if not netease.connected:
+        logger.warning("Netease API connectivity check failed at startup.")
     weather = WeatherService(
         api_key=settings.qweather_api_key,
         geo_base_url=settings.qweather_geo_base_url,
         weather_base_url=settings.qweather_weather_base_url,
         timeout_seconds=settings.request_timeout_seconds,
     )
+    if not weather.enabled:
+        logger.warning("Weather service is disabled (missing QWEATHER_API_KEY).")
     tool_handler = ToolHandler(netease, weather)
     assistant = AssistantService(ark_client=ArkClient(settings), tool_handler=tool_handler)
     tts_service = TTSService(settings)
+    asr_service = ASRService(settings)
     logger.info("TTS enabled: %s", tts_service.enabled)
+    logger.info("ASR enabled: %s", asr_service.enabled)
     async with websockets.serve(
-        lambda ws: handle_client(ws, settings, assistant, tts_service),
+        lambda ws: handle_client(ws, settings, assistant, tts_service, asr_service),
         settings.host,
         settings.port,
     ):

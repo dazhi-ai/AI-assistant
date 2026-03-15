@@ -12,6 +12,14 @@ venv/
 # Frontend dependencies and build artifacts
 web-client/node_modules/
 web-client/dist/
+services/netease-api-runtime/node_modules/
+services/netease-api-runtime/package-lock.json
+
+# External service source checkouts
+services/
+services/xiaozhi-esp32-server/
+services/NeteaseCloudMusicApi/
+services/netease-api-enhanced/
 
 # OS generated files
 Thumbs.db

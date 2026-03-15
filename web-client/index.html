@@ -42,6 +42,15 @@
       </section>
 
       <section class="panel">
+        <h2 class="section-title">发送音频输入（AUDIO_INPUT）</h2>
+        <div class="actions">
+          <input id="audioFileInput" class="grow" type="file" accept=".wav,.mp3,.opus,audio/*" />
+          <button id="sendAudioBtn" type="button">上传并发送</button>
+        </div>
+        <div id="audioUploadText" class="muted">用于开发环境验证 ASR -> 对话链路。</div>
+      </section>
+
+      <section class="panel">
         <h2 class="section-title">Live2D 模型区（MODEL_SWITCH）</h2>
         <div id="modelText" class="muted">当前模型：未加载</div>
         <div id="live2dContainer" class="live2d-container"></div>

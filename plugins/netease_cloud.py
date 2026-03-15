@@ -25,6 +25,11 @@ class NeteaseCloudController:
         self._timeout_seconds = timeout_seconds
         self._connected = False
 
+    @property
+    def connected(self) -> bool:
+        """Whether Netease API connectivity check has passed."""
+        return self._connected
+
     def _build_url(self, path: str, params: dict[str, Any] | None = None) -> str:
         """Build one request URL and append cookie when configured."""
         query: dict[str, Any] = params.copy() if params else {}

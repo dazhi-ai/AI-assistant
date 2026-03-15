@@ -32,6 +32,11 @@ class Settings:
     tts_rate: str
     tts_volume: str
     log_level: str
+    asr_base_url: str
+    asr_api_key: str
+    asr_model: str
+    asr_language: str
+    asr_max_audio_bytes: int
 
 
 def _to_bool(value: str) -> bool:
@@ -67,6 +72,11 @@ def load_settings() -> Settings:
     tts_rate = os.getenv("TTS_RATE", "+0%")
     tts_volume = os.getenv("TTS_VOLUME", "+0%")
     log_level = os.getenv("LOG_LEVEL", "INFO")
+    asr_base_url = os.getenv("ASR_BASE_URL", "https://api.openai.com/v1/audio/transcriptions")
+    asr_api_key = os.getenv("ASR_API_KEY", "")
+    asr_model = os.getenv("ASR_MODEL", "whisper-1")
+    asr_language = os.getenv("ASR_LANGUAGE", "zh")
+    asr_max_audio_bytes = int(os.getenv("ASR_MAX_AUDIO_BYTES", "10485760"))
     return Settings(
         host=host,
         port=port,
@@ -90,4 +100,23 @@ def load_settings() -> Settings:
         tts_rate=tts_rate,
         tts_volume=tts_volume,
         log_level=log_level,
+        asr_base_url=asr_base_url,
+        asr_api_key=asr_api_key,
+        asr_model=asr_model,
+        asr_language=asr_language,
+        asr_max_audio_bytes=asr_max_audio_bytes,
     )
+
+
+def validate_settings(settings: Settings) -> list[str]:
+    """Validate settings and return human-readable warnings/errors."""
+    issues: list[str] = []
+    if settings.port <= 0 or settings.port > 65535:
+        issues.append("PORT must be in range 1-65535.")
+    if settings.request_timeout_seconds <= 0:
+        issues.append("REQUEST_TIMEOUT_SECONDS must be greater than 0.")
+    if settings.temperature_factual < 0 or settings.temperature_chat < 0 or settings.temperature_default < 0:
+        issues.append("Temperature values must be non-negative.")
+    if settings.asr_max_audio_bytes <= 0:
+        issues.append("ASR_MAX_AUDIO_BYTES must be greater than 0.")
+    return issues

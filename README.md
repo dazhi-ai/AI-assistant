@@ -35,6 +35,11 @@ TTS_VOICE=zh-CN-XiaoxiaoNeural
 TTS_RATE=+0%
 TTS_VOLUME=+0%
 LOG_LEVEL=INFO
+ASR_BASE_URL=https://api.openai.com/v1/audio/transcriptions
+ASR_API_KEY=
+ASR_MODEL=whisper-1
+ASR_LANGUAGE=zh
+ASR_MAX_AUDIO_BYTES=10485760
 ```
 
 ## 3. 启动服务
@@ -86,6 +91,27 @@ python main.py
 当工具触发天气查询时，额外返回 `WEATHER_CARD`（含 3 天预报）。
 当服务端启用 TTS 时，还会推送 `AUDIO_CHUNK` + `AUDIO_END`。
 当识别到“换成/切换”类指令时，会推送 `MODEL_SWITCH`。
+当发送音频输入时，服务端会返回 `ASR_RESULT` 并继续走对话链路。
+
+音频输入事件示例（base64 分片）：
+```json
+{
+  "type": "AUDIO_INPUT_CHUNK",
+  "trace_id": "audio-1",
+  "payload": {
+    "chunk_base64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEA..."
+  }
+}
+```
+
+音频输入结束事件：
+```json
+{
+  "type": "AUDIO_INPUT_END",
+  "trace_id": "audio-1",
+  "payload": {}
+}
+```
 
 ## 5. 搜索选歌多轮示例
 
@@ -106,10 +132,13 @@ python main.py
 - `QRCODE`：展示网易云登录二维码
 - `AUDIO_URL`：设置播放器并自动尝试播放
 - `AUDIO_CHUNK` / `AUDIO_END`：分片音频接收与播放
+- `ASR_RESULT`：显示语音转写结果
 - `EFFECT`：目前支持 `HEART` 动效
 - `WEATHER_CARD`：展示 3 天天气卡片
 - `MODEL_SWITCH`：加载并切换 Live2D 模型
 - `TOOL_RESULT` / `ERROR`：写入日志面板
+
+页面还提供了“发送音频输入（AUDIO_INPUT）”功能，可直接上传本地音频文件，验证 ASR -> 对话 -> TTS 全链路。
 
 ## 7. 老安卓兼容构建（Babel）
 
@@ -122,5 +151,17 @@ python main.py
 ## 8. 非 Docker 部署
 
 已提供 systemd 服务模板与部署文档：
-- 服务文件：`scripts/systemd/ai-assistant.service`、`scripts/systemd/netease-api.service`
+- 服务文件：`scripts/systemd/ai-assistant.service`、`scripts/systemd/netease-api.service`、`scripts/systemd/xiaozhi-server.service`
 - 部署说明：`部署说明-systemd.md`
+
+网易云 API 说明：
+- 原始 `Binaryify/NeteaseCloudMusicApi` GitHub 仓库已不再维护代码。
+- 当前建议使用 `@neteasecloudmusicapienhanced/api` npm 包部署方式（文档已同步）。
+
+## 9. 任务1.2（小智后端 + 豆包）
+
+已补充交付文件：
+- `scripts/systemd/xiaozhi-server.service`（源码部署的 systemd 托管模板）
+- `scripts/xiaozhi/.config.yaml.doubao.example`（Doubao 最小可用配置模板）
+- `scripts/xiaozhi/deploy-xiaozhi-linux.sh`（Linux 一键生成配置与安装依赖脚本）
+- `任务1.2-小智后端与豆包接入.md`（完整执行与验收清单）

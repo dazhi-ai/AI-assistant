@@ -1,0 +1,30 @@
+server:
+  ip: 0.0.0.0
+  port: 8000
+  http_port: 8003
+  websocket: ws://你的服务器IP:8000/xiaozhi/v1/
+
+selected_module:
+  LLM: DoubaoLLM
+  Intent: function_call
+  TTS: EdgeTTS
+
+LLM:
+  DoubaoLLM:
+    type: openai
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    model_name: doubao-1-5-pro-32k-250115
+    api_key: 你的ARK_API_KEY
+
+Intent:
+  function_call:
+    type: function_call
+    functions:
+      - get_weather
+      - play_music
+
+TTS:
+  EdgeTTS:
+    type: edge
+    voice: zh-CN-XiaoxiaoNeural
+    output_dir: tmp/

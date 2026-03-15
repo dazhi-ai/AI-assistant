@@ -12,6 +12,9 @@
   var sendTextBtn = document.getElementById("sendTextBtn");
   var statusText = document.getElementById("statusText");
   var textInput = document.getElementById("textInput");
+  var audioFileInput = document.getElementById("audioFileInput");
+  var sendAudioBtn = document.getElementById("sendAudioBtn");
+  var audioUploadText = document.getElementById("audioUploadText");
   var logBox = document.getElementById("logBox");
   var qrText = document.getElementById("qrText");
   var qrImage = document.getElementById("qrImage");
@@ -350,6 +353,10 @@
       renderWeatherCard(payload);
       return;
     }
+    if (t === "ASR_RESULT") {
+      effectText.textContent = "语音识别：" + (payload.text || "");
+      return;
+    }
     if (t === "MODEL_SWITCH") {
       loadModel(payload.model_id || "default", payload.style || "");
       return;
@@ -440,9 +447,64 @@
       text: text
     });
   }
+  function uint8ToBase64(bytes) {
+    var CHUNK = 0x8000;
+    var index = 0;
+    var result = "";
+    while (index < bytes.length) {
+      var slice = bytes.subarray(index, Math.min(index + CHUNK, bytes.length));
+      var i = 0;
+      var bin = "";
+      for (i = 0; i < slice.length; i += 1) {
+        bin += String.fromCharCode(slice[i]);
+      }
+      result += window.btoa(bin);
+      index += CHUNK;
+    }
+    return result;
+  }
+  function sendAudioInput() {
+    if (!audioFileInput || !audioFileInput.files || !audioFileInput.files.length) {
+      appendLog("WARN", "请先选择音频文件。");
+      return;
+    }
+    var file = audioFileInput.files[0];
+    var reader = new FileReader();
+    var trace = traceId("audio");
+    reader.onload = function () {
+      var arrayBuffer = reader.result;
+      var bytes = new Uint8Array(arrayBuffer);
+      var chunkSize = 32 * 1024;
+      var total = Math.ceil(bytes.length / chunkSize);
+      var i = 0;
+      for (i = 0; i < total; i += 1) {
+        var start = i * chunkSize;
+        var end = Math.min(start + chunkSize, bytes.length);
+        var part = bytes.subarray(start, end);
+        safeSend("AUDIO_INPUT_CHUNK", {
+          chunk_index: i,
+          chunk_base64: uint8ToBase64(part),
+          file_name: file.name,
+          mime_type: file.type || "application/octet-stream"
+        }, trace);
+      }
+      safeSend("AUDIO_INPUT_END", {
+        file_name: file.name,
+        chunks: total
+      }, trace);
+      audioUploadText.textContent = "已发送音频分片：" + total + "，文件：" + file.name;
+    };
+    reader.onerror = function () {
+      appendLog("ERROR", "读取音频文件失败。");
+    };
+    reader.readAsArrayBuffer(file);
+  }
   connectBtn.onclick = connect;
   disconnectBtn.onclick = disconnect;
   sendTextBtn.onclick = sendTextCommand;
+  if (sendAudioBtn) {
+    sendAudioBtn.onclick = sendAudioInput;
+  }
   textInput.onkeydown = function (event) {
     var keyCode = event && (event.keyCode || event.which);
     if (keyCode === 13) {

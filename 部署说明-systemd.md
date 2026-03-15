@@ -15,9 +15,16 @@
 3. 复制 `.env.example` 为 `.env` 并填入密钥
 
 ## 3. 网易云 API 部署
-1. 克隆 `NeteaseCloudMusicApi` 到 `/opt/NeteaseCloudMusicApi`
-2. 安装依赖：`npm install`
-3. 启动验证：`npm run start`
+由于原始 GitHub 仓库已不再维护，建议使用官方增强版 npm 包部署：
+1. 创建目录：`sudo mkdir -p /opt/netease-api-runtime`
+2. 初始化并安装包：
+   - `cd /opt/netease-api-runtime`
+   - `npm init -y`
+   - `npm install @neteasecloudmusicapienhanced/api`
+3. 手动启动验证：
+   - `HOST=127.0.0.1 PORT=3000 node ./node_modules/@neteasecloudmusicapienhanced/api/app.js`
+4. 接口检查：
+   - `curl "http://127.0.0.1:3000/banner?type=0"`
 
 ## 4. systemd 服务安装
 将本项目中的服务文件拷贝到 `/etc/systemd/system/`：
@@ -35,6 +42,7 @@
 - `sudo systemctl status netease-api`
 - `sudo systemctl status ai-assistant`
 - `sudo journalctl -u ai-assistant -f`
+- `sudo journalctl -u netease-api -f`
 
 ## 6. 安全建议
 - `.env` 权限设为仅服务用户可读

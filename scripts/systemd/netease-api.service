@@ -7,12 +7,12 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/opt/NeteaseCloudMusicApi
+WorkingDirectory=/opt/netease-api-runtime
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOST=127.0.0.1
 EnvironmentFile=-/etc/default/netease-api
-ExecStart=/usr/bin/npm run start
+ExecStart=/usr/bin/node /opt/netease-api-runtime/node_modules/@neteasecloudmusicapienhanced/api/app.js
 Restart=always
 RestartSec=3
 TimeoutStartSec=30

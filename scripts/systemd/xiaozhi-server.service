@@ -1,0 +1,19 @@
+[Unit]
+Description=Xiaozhi ESP32 Backend Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/xiaozhi-esp32-server/main/xiaozhi-server
+ExecStart=/opt/conda/envs/xiaozhi-esp32-server/bin/python app.py
+Restart=always
+RestartSec=3
+TimeoutStartSec=60
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
