@@ -11,11 +11,16 @@ from src.config import Settings
 
 
 class ASRService:
-    """Transcribe audio bytes into text with OpenAI-compatible API."""
+    """Transcribe audio bytes with provider-specific API."""
 
     def __init__(self, settings: Settings) -> None:
+        self._provider = settings.asr_provider
         self._base_url = settings.asr_base_url
         self._api_key = settings.asr_api_key
+        self._app_id = settings.asr_app_id or settings.volc_app_id
+        self._access_token = settings.asr_access_token or settings.volc_access_token
+        self._secret_key = settings.asr_secret_key or settings.volc_secret_key
+        self._auth_style = settings.asr_auth_style
         self._model = settings.asr_model
         self._language = settings.asr_language
         self._max_audio_bytes = settings.asr_max_audio_bytes
@@ -23,7 +28,11 @@ class ASRService:
     @property
     def enabled(self) -> bool:
         """Whether ASR API is configured."""
-        return bool(self._api_key)
+        if self._provider == "openai":
+            return bool(self._api_key and self._base_url)
+        if self._provider == "volc":
+            return bool(self._base_url and self._app_id and self._access_token)
+        return False
 
     @property
     def max_audio_bytes(self) -> int:
@@ -53,16 +62,53 @@ class ASRService:
         parts.append(f"--{boundary}--\r\n".encode("utf-8"))
         return b"".join(parts), boundary
 
+    def _extract_text(self, data: dict) -> str:
+        """Extract text from a few common ASR response formats."""
+        direct_text = str(data.get("text", "")).strip()
+        if direct_text:
+            return direct_text
+        result = data.get("result")
+        if isinstance(result, dict):
+            nested_text = str(result.get("text", "")).strip()
+            if nested_text:
+                return nested_text
+            utterances = result.get("utterances", [])
+            if isinstance(utterances, list):
+                pieces = [str(item.get("text", "")).strip() for item in utterances if isinstance(item, dict)]
+                joined = " ".join([piece for piece in pieces if piece])
+                if joined:
+                    return joined
+        utterances = data.get("utterances", [])
+        if isinstance(utterances, list):
+            pieces = [str(item.get("text", "")).strip() for item in utterances if isinstance(item, dict)]
+            return " ".join([piece for piece in pieces if piece]).strip()
+        return ""
+
+    def _build_headers(self, boundary: str) -> dict[str, str]:
+        """Build request headers based on provider."""
+        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        if self._provider == "openai":
+            headers["Authorization"] = f"Bearer {self._api_key}"
+            return headers
+        token = self._access_token
+        if self._auth_style == "bearer":
+            headers["Authorization"] = f"Bearer {token}"
+        elif self._auth_style == "bearer_semicolon":
+            headers["Authorization"] = f"Bearer; {token}"
+        else:
+            # Volc token mode typically uses "Bearer; {token}".
+            headers["Authorization"] = f"Bearer; {token}"
+        if self._app_id:
+            headers["X-Appid"] = self._app_id
+        return headers
+
     def _transcribe_sync(self, audio_bytes: bytes) -> dict[str, str | bool]:
         """Run HTTP request to ASR endpoint in blocking context."""
         body, boundary = self._build_multipart_body(audio_bytes=audio_bytes, filename="audio_input.wav")
         req = request.Request(
             self._base_url,
             data=body,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-            },
+            headers=self._build_headers(boundary),
             method="POST",
         )
         try:
@@ -74,7 +120,7 @@ class ASRService:
             return {"ok": False, "error": f"ASR connection error: {exc.reason}"}
         except json.JSONDecodeError:
             return {"ok": False, "error": "ASR response is not valid JSON"}
-        text = str(data.get("text", "")).strip()
+        text = self._extract_text(data)
         if not text:
             return {"ok": False, "error": "ASR returned empty text"}
         return {"ok": True, "text": text}
@@ -82,7 +128,12 @@ class ASRService:
     async def transcribe(self, audio_bytes: bytes) -> dict[str, str | bool]:
         """Transcribe audio asynchronously."""
         if not self.enabled:
-            return {"ok": False, "error": "ASR is not configured (missing ASR_API_KEY)"}
+            if self._provider == "volc":
+                return {
+                    "ok": False,
+                    "error": "ASR is not configured for volc mode (check ASR_BASE_URL and ASR_ACCESS_TOKEN/ASR_APP_ID).",
+                }
+            return {"ok": False, "error": "ASR is not configured (missing ASR_API_KEY)."}
         if not audio_bytes:
             return {"ok": False, "error": "Empty audio bytes"}
         if len(audio_bytes) > self._max_audio_bytes:

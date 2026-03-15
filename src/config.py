@@ -31,9 +31,25 @@ class Settings:
     tts_voice: str
     tts_rate: str
     tts_volume: str
+    tts_provider: str
+    tts_volc_base_url: str
+    tts_volc_voice_type: str
+    tts_volc_cluster: str
+    tts_volc_encoding: str
+    tts_volc_speed_ratio: float
+    tts_volc_volume_ratio: float
+    tts_volc_pitch_ratio: float
     log_level: str
+    volc_app_id: str
+    volc_access_token: str
+    volc_secret_key: str
+    asr_provider: str
     asr_base_url: str
     asr_api_key: str
+    asr_app_id: str
+    asr_access_token: str
+    asr_secret_key: str
+    asr_auth_style: str
     asr_model: str
     asr_language: str
     asr_max_audio_bytes: int
@@ -71,9 +87,25 @@ def load_settings() -> Settings:
     tts_voice = os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
     tts_rate = os.getenv("TTS_RATE", "+0%")
     tts_volume = os.getenv("TTS_VOLUME", "+0%")
+    tts_provider = os.getenv("TTS_PROVIDER", "edge").strip().lower()
+    tts_volc_base_url = os.getenv("TTS_VOLC_BASE_URL", "")
+    tts_volc_voice_type = os.getenv("TTS_VOLC_VOICE_TYPE", "BV001_streaming")
+    tts_volc_cluster = os.getenv("TTS_VOLC_CLUSTER", "volcano_tts")
+    tts_volc_encoding = os.getenv("TTS_VOLC_ENCODING", "mp3")
+    tts_volc_speed_ratio = float(os.getenv("TTS_VOLC_SPEED_RATIO", "1.0"))
+    tts_volc_volume_ratio = float(os.getenv("TTS_VOLC_VOLUME_RATIO", "1.0"))
+    tts_volc_pitch_ratio = float(os.getenv("TTS_VOLC_PITCH_RATIO", "1.0"))
     log_level = os.getenv("LOG_LEVEL", "INFO")
+    volc_app_id = os.getenv("VOLC_APP_ID", "")
+    volc_access_token = os.getenv("VOLC_ACCESS_TOKEN", "")
+    volc_secret_key = os.getenv("VOLC_SECRET_KEY", "")
+    asr_provider = os.getenv("ASR_PROVIDER", "openai").strip().lower()
     asr_base_url = os.getenv("ASR_BASE_URL", "https://api.openai.com/v1/audio/transcriptions")
     asr_api_key = os.getenv("ASR_API_KEY", "")
+    asr_app_id = os.getenv("ASR_APP_ID", "")
+    asr_access_token = os.getenv("ASR_ACCESS_TOKEN", "")
+    asr_secret_key = os.getenv("ASR_SECRET_KEY", "")
+    asr_auth_style = os.getenv("ASR_AUTH_STYLE", "auto").strip().lower()
     asr_model = os.getenv("ASR_MODEL", "whisper-1")
     asr_language = os.getenv("ASR_LANGUAGE", "zh")
     asr_max_audio_bytes = int(os.getenv("ASR_MAX_AUDIO_BYTES", "10485760"))
@@ -99,9 +131,25 @@ def load_settings() -> Settings:
         tts_voice=tts_voice,
         tts_rate=tts_rate,
         tts_volume=tts_volume,
+        tts_provider=tts_provider,
+        tts_volc_base_url=tts_volc_base_url,
+        tts_volc_voice_type=tts_volc_voice_type,
+        tts_volc_cluster=tts_volc_cluster,
+        tts_volc_encoding=tts_volc_encoding,
+        tts_volc_speed_ratio=tts_volc_speed_ratio,
+        tts_volc_volume_ratio=tts_volc_volume_ratio,
+        tts_volc_pitch_ratio=tts_volc_pitch_ratio,
         log_level=log_level,
+        volc_app_id=volc_app_id,
+        volc_access_token=volc_access_token,
+        volc_secret_key=volc_secret_key,
+        asr_provider=asr_provider,
         asr_base_url=asr_base_url,
         asr_api_key=asr_api_key,
+        asr_app_id=asr_app_id,
+        asr_access_token=asr_access_token,
+        asr_secret_key=asr_secret_key,
+        asr_auth_style=asr_auth_style,
         asr_model=asr_model,
         asr_language=asr_language,
         asr_max_audio_bytes=asr_max_audio_bytes,
@@ -119,4 +167,28 @@ def validate_settings(settings: Settings) -> list[str]:
         issues.append("Temperature values must be non-negative.")
     if settings.asr_max_audio_bytes <= 0:
         issues.append("ASR_MAX_AUDIO_BYTES must be greater than 0.")
+    if settings.asr_provider not in {"openai", "volc"}:
+        issues.append("ASR_PROVIDER must be 'openai' or 'volc'.")
+    if settings.tts_provider not in {"edge", "volc"}:
+        issues.append("TTS_PROVIDER must be 'edge' or 'volc'.")
+    if settings.asr_provider == "volc":
+        if not settings.asr_base_url:
+            issues.append("ASR_BASE_URL is required when ASR_PROVIDER=volc.")
+        if not (settings.asr_access_token or settings.volc_access_token):
+            issues.append("ASR_ACCESS_TOKEN or VOLC_ACCESS_TOKEN is required when ASR_PROVIDER=volc.")
+        if not (settings.asr_app_id or settings.volc_app_id):
+            issues.append("ASR_APP_ID or VOLC_APP_ID is required when ASR_PROVIDER=volc.")
+    if settings.tts_provider == "volc":
+        if not settings.tts_volc_base_url:
+            issues.append("TTS_VOLC_BASE_URL is required when TTS_PROVIDER=volc.")
+        if not settings.volc_access_token:
+            issues.append("VOLC_ACCESS_TOKEN is required when TTS_PROVIDER=volc.")
+        if not settings.volc_app_id:
+            issues.append("VOLC_APP_ID is required when TTS_PROVIDER=volc.")
+    if settings.tts_volc_speed_ratio <= 0:
+        issues.append("TTS_VOLC_SPEED_RATIO must be greater than 0.")
+    if settings.tts_volc_volume_ratio <= 0:
+        issues.append("TTS_VOLC_VOLUME_RATIO must be greater than 0.")
+    if settings.tts_volc_pitch_ratio <= 0:
+        issues.append("TTS_VOLC_PITCH_RATIO must be greater than 0.")
     return issues
