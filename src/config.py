@@ -39,6 +39,7 @@ class Settings:
     tts_volc_speed_ratio: float
     tts_volc_volume_ratio: float
     tts_volc_pitch_ratio: float
+    tts_volc_auth_style: str
     log_level: str
     volc_app_id: str
     volc_access_token: str
@@ -98,6 +99,8 @@ def load_settings() -> Settings:
     tts_volc_speed_ratio = float(os.getenv("TTS_VOLC_SPEED_RATIO", "1.0"))
     tts_volc_volume_ratio = float(os.getenv("TTS_VOLC_VOLUME_RATIO", "1.0"))
     tts_volc_pitch_ratio = float(os.getenv("TTS_VOLC_PITCH_RATIO", "1.0"))
+    tts_volc_auth_style_raw = os.getenv("TTS_VOLC_AUTH_STYLE", "auto").strip().lower()
+    tts_volc_auth_style = "bearer_semicolon" if tts_volc_auth_style_raw in {"auto", "token"} else tts_volc_auth_style_raw
     log_level = os.getenv("LOG_LEVEL", "INFO")
     volc_app_id = os.getenv("VOLC_APP_ID", "")
     volc_access_token = os.getenv("VOLC_ACCESS_TOKEN", "")
@@ -148,6 +151,7 @@ def load_settings() -> Settings:
         tts_volc_speed_ratio=tts_volc_speed_ratio,
         tts_volc_volume_ratio=tts_volc_volume_ratio,
         tts_volc_pitch_ratio=tts_volc_pitch_ratio,
+        tts_volc_auth_style=tts_volc_auth_style,
         log_level=log_level,
         volc_app_id=volc_app_id,
         volc_access_token=volc_access_token,
@@ -190,8 +194,8 @@ def validate_settings(settings: Settings) -> list[str]:
         if not (settings.asr_app_id or settings.volc_app_id):
             issues.append("ASR_APP_ID or VOLC_APP_ID is required when ASR_PROVIDER=volc.")
     if settings.tts_provider == "volc":
-        if not settings.tts_volc_base_url:
-            issues.append("TTS_VOLC_BASE_URL is required when TTS_PROVIDER=volc.")
+        if not (settings.tts_volc_base_url or settings.volc_tts_ws_url):
+            issues.append("TTS_VOLC_BASE_URL or VOLC_TTS_WS_URL is required when TTS_PROVIDER=volc.")
         if not settings.volc_access_token:
             issues.append("VOLC_ACCESS_TOKEN is required when TTS_PROVIDER=volc.")
         if not settings.volc_app_id:
@@ -202,4 +206,6 @@ def validate_settings(settings: Settings) -> list[str]:
         issues.append("TTS_VOLC_VOLUME_RATIO must be greater than 0.")
     if settings.tts_volc_pitch_ratio <= 0:
         issues.append("TTS_VOLC_PITCH_RATIO must be greater than 0.")
+    if settings.tts_volc_auth_style not in {"bearer", "bearer_semicolon"}:
+        issues.append("TTS_VOLC_AUTH_STYLE must be 'bearer', 'token', or 'auto'.")
     return issues

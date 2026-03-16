@@ -42,6 +42,7 @@ TTS_VOLC_ENCODING=mp3
 TTS_VOLC_SPEED_RATIO=1.0
 TTS_VOLC_VOLUME_RATIO=1.0
 TTS_VOLC_PITCH_RATIO=1.0
+TTS_VOLC_AUTH_STYLE=auto
 LOG_LEVEL=INFO
 VOLC_APP_ID=
 VOLC_ACCESS_TOKEN=
@@ -64,6 +65,7 @@ ASR_MAX_AUDIO_BYTES=10485760
 - `ASR_PROVIDER=volc`（或 `volcengine`），并配置 `ASR_BASE_URL` + `ASR_APP_ID/ASR_ACCESS_TOKEN`（或复用 `VOLC_APP_ID/VOLC_ACCESS_TOKEN`）。
 - `ASR_AUTH_STYLE=token` 会自动映射为火山 `Bearer; token` 头格式。
 - `TTS_PROVIDER=volc`（或 `volcengine`），并配置 `TTS_VOLC_BASE_URL`（可填 `wss://...`）+ `VOLC_APP_ID/VOLC_ACCESS_TOKEN`。
+- `TTS_VOLC_AUTH_STYLE` 支持 `auto/token`（映射为 `Bearer; token`）或 `bearer`（映射为 `Bearer token`）。
 
 ## 3. 启动服务
 

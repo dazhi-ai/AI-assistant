@@ -67,6 +67,13 @@ async def _stream_tts_to_client(
             trace_id=trace_id,
         )
         chunk_index += 1
+    if chunk_index == 0 and tts_service.last_error:
+        await _send_message(
+            websocket,
+            "ERROR",
+            {"code": "TTS_FAILED", "message": tts_service.last_error},
+            trace_id=trace_id,
+        )
     await _send_message(
         websocket,
         "AUDIO_END",

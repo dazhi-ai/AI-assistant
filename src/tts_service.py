@@ -37,6 +37,8 @@ class TTSService:
         self._volc_speed_ratio = settings.tts_volc_speed_ratio
         self._volc_volume_ratio = settings.tts_volc_volume_ratio
         self._volc_pitch_ratio = settings.tts_volc_pitch_ratio
+        self._volc_auth_style = settings.tts_volc_auth_style
+        self._last_error = ""
 
     @property
     def enabled(self) -> bool:
@@ -46,6 +48,45 @@ class TTSService:
         if self._provider == "volc":
             return bool((self._volc_base_url or self._volc_ws_url) and self._volc_app_id and self._volc_access_token)
         return False
+
+    @property
+    def last_error(self) -> str:
+        """Last human-readable TTS error for observability."""
+        return self._last_error
+
+    def _set_error(self, message: str) -> None:
+        """Persist latest TTS error so caller can return it to client."""
+        self._last_error = message.strip()
+
+    def _clear_error(self) -> None:
+        """Clear last error before each synthesis task."""
+        self._last_error = ""
+
+    def _build_volc_auth_header(self) -> str:
+        """Build volc Authorization header based on configured style."""
+        token = self._volc_access_token.strip()
+        if not token:
+            return ""
+        if self._volc_auth_style == "bearer":
+            return f"Bearer {token}"
+        # Volc default token mode commonly expects "Bearer; token".
+        return f"Bearer; {token}"
+
+    def _resolve_volc_http_url(self) -> str:
+        """Resolve volc HTTP endpoint, tolerating ws-style URLs in config."""
+        base_url = (self._volc_base_url or "").strip()
+        if base_url:
+            if base_url.startswith("ws://") or base_url.startswith("wss://"):
+                scheme = "https://" if base_url.startswith("wss://") else "http://"
+                host_path = base_url.split("://", 1)[1]
+                if host_path.endswith("/api/v3/tts/bidirection"):
+                    host_path = host_path.replace("/api/v3/tts/bidirection", "/api/v1/tts")
+                return f"{scheme}{host_path}"
+            return base_url
+        ws_url = (self._volc_ws_url or "").strip()
+        if "openspeech.bytedance.com" in ws_url:
+            return "https://openspeech.bytedance.com/api/v1/tts"
+        return ""
 
     def _build_volc_payload(self, text: str) -> bytes:
         """Build volc tts request payload using common V3 structure."""
@@ -86,43 +127,57 @@ class TTSService:
 
     async def _stream_volc_chunks(self, text: str) -> AsyncGenerator[str, None]:
         """Call volc HTTP API once and split audio bytes into websocket chunks."""
-        ws_url = self._volc_base_url or self._volc_ws_url
-        if ws_url.startswith("ws://") or ws_url.startswith("wss://"):
-            async for ws_chunk in self._stream_volc_ws_chunks(text):
-                yield ws_chunk
+        http_url = self._resolve_volc_http_url()
+        if not http_url:
+            self._set_error("TTS_VOLC_BASE_URL is empty and no fallback HTTP endpoint is available.")
             return
 
-        def _request_sync() -> tuple[str, bytes] | None:
-            if not self._volc_base_url:
+        def _request_sync() -> tuple[bool, str, bytes] | None:
+            if not http_url:
                 return None
+            auth_header = self._build_volc_auth_header()
+            headers = {"Content-Type": "application/json"}
+            if auth_header:
+                headers["Authorization"] = auth_header
             req = request.Request(
-                self._volc_base_url,
+                http_url,
                 data=self._build_volc_payload(text),
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer; {self._volc_access_token}",
-                },
+                headers=headers,
                 method="POST",
             )
             try:
                 with request.urlopen(req, timeout=45) as response:
                     content_type = response.headers.get("Content-Type", "").lower()
                     body = response.read()
-                    return content_type, body
-            except error.HTTPError:
-                return None
-            except error.URLError:
-                return None
+                    return True, content_type, body
+            except error.HTTPError as exc:
+                err_body = b""
+                try:
+                    err_body = exc.read()
+                except Exception:  # noqa: BLE001
+                    err_body = b""
+                return False, "application/json", err_body or str(exc).encode("utf-8")
+            except error.URLError as exc:
+                return False, "text/plain", str(exc.reason).encode("utf-8")
 
         result = await asyncio.to_thread(_request_sync)
         if result is None:
+            self._set_error("TTS request was not sent because endpoint is empty.")
             return
-        content_type, body = result
+        ok, content_type, body = result
+        if not ok:
+            message = body.decode("utf-8", errors="ignore").strip()
+            if not message:
+                message = "unknown volc tts request error"
+            self._set_error(f"Volc TTS HTTP request failed: {message}")
+            return
         try:
             audio_bytes = self._extract_volc_audio(raw_bytes=body, content_type=content_type)
-        except (ValueError, json.JSONDecodeError):
+        except (ValueError, json.JSONDecodeError) as exc:
+            self._set_error(f"Volc TTS parse error: {exc}")
             return
         if not audio_bytes:
+            self._set_error("Volc TTS returned empty audio bytes.")
             return
         chunk_size = 24 * 1024
         offset = 0
@@ -138,9 +193,10 @@ class TTSService:
             return
         payload = self._build_volc_payload(text).decode("utf-8")
         try:
+            auth_header = self._build_volc_auth_header()
             async with websockets.connect(
                 ws_url,
-                additional_headers={"Authorization": f"Bearer; {self._volc_access_token}"},
+                additional_headers={"Authorization": auth_header} if auth_header else None,
                 open_timeout=10,
             ) as websocket:
                 await websocket.send(payload)
@@ -161,6 +217,7 @@ class TTSService:
                     except json.JSONDecodeError:
                         continue
                     if data.get("error"):
+                        self._set_error(f"Volc TTS WS error: {data.get('error')}")
                         break
                     if data.get("is_end") or data.get("done"):
                         break
@@ -169,14 +226,18 @@ class TTSService:
                         audio_base64 = str(data["result"].get("audio", "")).strip()
                     if audio_base64:
                         yield audio_base64
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            self._set_error(f"Volc TTS WS connection error: {exc}")
             return
 
     async def stream_audio_chunks(self, text: str) -> AsyncGenerator[str, None]:
         """Yield base64-encoded audio chunks for websocket transport."""
+        self._clear_error()
         if not text:
+            self._set_error("TTS input text is empty.")
             return
         if not self.enabled:
+            self._set_error("TTS is not enabled with current provider configuration.")
             return
         if self._provider == "edge":
             communicator = edge_tts.Communicate(text=text, voice=self._voice, rate=self._rate, volume=self._volume)
