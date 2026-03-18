@@ -1,0 +1,68 @@
+# 小智后端配置模板（全 API 方案，无本地模型）
+# 适用场景：
+#   - 2核2G 及以上服务器
+#   - ASR/TTS/LLM 全部使用云 API，拒绝运行 FunASR/GPT-SoVITS 等本地模型
+#   - 搭配全模块安装（含智控台）使用
+#
+# 填写须知：
+#   VOLC_APP_ID / VOLC_ACCESS_TOKEN：
+#     前往 https://console.volcengine.com/speech/service/asr 开通「语音识别」和「语音合成」服务
+#     在「服务管理 -> 应用管理」中创建应用，获取 appid 和 access_token
+#   ARK_API_KEY：
+#     前往 https://console.volcengine.com/ark 创建 API Key
+#   注意：服务开通后需等待约 30 分钟才能正常使用
+
+server:
+  ip: 0.0.0.0
+  port: 8000
+  http_port: 8003
+  # 固件设备通过 OTA 接口拿到此地址后建立 WebSocket 连接
+  websocket: ws://你的服务器局域网IP:8000/xiaozhi/v1/
+
+selected_module:
+  LLM: DoubaoLLM          # 豆包大模型（火山引擎 Ark，OpenAI 兼容接口）
+  ASR: DoubaoASR           # 火山引擎语音识别（流式，API 调用）
+  TTS: HuoshanDoubleStreamTTS  # 火山引擎双流式语音合成（API 调用，低延迟）
+  Intent: function_call   # 大模型函数调用意图识别
+
+# ─── 大模型 ───────────────────────────────────────────────────────────
+LLM:
+  DoubaoLLM:
+    type: openai
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    model_name: doubao-1-5-pro-32k-250115
+    api_key: 填入你的ARK_API_KEY
+
+# ─── 语音识别（ASR）─────────────────────────────────────────────────
+# 使用火山引擎语音识别，cluster 对应普通话流式识别服务
+ASR:
+  DoubaoASR:
+    type: doubao
+    appid: 填入你的VOLC_APP_ID
+    access_token: 填入你的VOLC_ACCESS_TOKEN
+    cluster: volcengine_input_common   # 中文普通话；粤语可改为 volcengine_input_yue
+
+# ─── 语音合成（TTS）─────────────────────────────────────────────────
+# 使用火山引擎双流式 TTS，比 EdgeTTS 延迟更低（约快 2.5s）
+# 常用音色（标准版，个人免费）：
+#   zh_female_wanwanxiaohe_moon_bigtts  - 女声（温柔）
+#   zh_male_M392_bigtts                 - 男声
+#   zh_female_tianmei_moon_bigtts       - 女声（甜美）
+TTS:
+  HuoshanDoubleStreamTTS:
+    type: huoshan
+    appid: 填入你的VOLC_APP_ID
+    access_token: 填入你的VOLC_ACCESS_TOKEN
+    voice: zh_female_wanwanxiaohe_moon_bigtts
+    cluster: volcano_tts
+    output_dir: tmp/
+
+# ─── 意图识别 ──────────────────────────────────────────────────────
+Intent:
+  function_call:
+    type: function_call
+    functions:
+      - get_time
+      - get_weather
+      - play_music
+      - open_app

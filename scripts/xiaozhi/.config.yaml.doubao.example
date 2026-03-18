@@ -6,8 +6,9 @@ server:
 
 selected_module:
   LLM: DoubaoLLM
+  ASR: DoubaoASR
+  TTS: HuoshanDoubleStreamTTS
   Intent: function_call
-  TTS: EdgeTTS
 
 LLM:
   DoubaoLLM:
@@ -16,15 +17,24 @@ LLM:
     model_name: doubao-1-5-pro-32k-250115
     api_key: 你的ARK_API_KEY
 
+ASR:
+  DoubaoASR:
+    type: doubao
+    appid: 你的VOLC_APP_ID
+    access_token: 你的VOLC_ACCESS_TOKEN
+    cluster: volcengine_input_common
+
+TTS:
+  HuoshanDoubleStreamTTS:
+    type: huoshan
+    appid: 你的VOLC_APP_ID
+    access_token: 你的VOLC_ACCESS_TOKEN
+    voice: zh_female_wanwanxiaohe_moon_bigtts
+    cluster: volcano_tts
+
 Intent:
   function_call:
     type: function_call
     functions:
       - get_weather
       - play_music
-
-TTS:
-  EdgeTTS:
-    type: edge
-    voice: zh-CN-XiaoxiaoNeural
-    output_dir: tmp/

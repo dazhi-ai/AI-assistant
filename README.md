@@ -183,10 +183,23 @@ python main.py
 - 原始 `Binaryify/NeteaseCloudMusicApi` GitHub 仓库已不再维护代码。
 - 当前建议使用 `@neteasecloudmusicapienhanced/api` npm 包部署方式（文档已同步）。
 
-## 9. 任务1.2（小智后端 + 豆包）
+## 9. 任务1.2（小智后端 + 豆包 + 火山引擎 ASR/TTS）
+
+**方案定型：ASR/TTS 全部使用火山引擎云 API，拒绝本地模型（FunASR / GPT-SoVITS 等）。**
 
 已补充交付文件：
 - `scripts/systemd/xiaozhi-server.service`（源码部署的 systemd 托管模板）
-- `scripts/xiaozhi/.config.yaml.doubao.example`（Doubao 最小可用配置模板）
-- `scripts/xiaozhi/deploy-xiaozhi-linux.sh`（Linux 一键生成配置与安装依赖脚本）
-- `任务1.2-小智后端与豆包接入.md`（完整执行与验收清单）
+- `scripts/xiaozhi/.config.yaml.doubao.example`（豆包 LLM + DoubaoASR + 火山流式 TTS 配置模板）
+- `scripts/xiaozhi/.config.yaml.volc-api-only.example`（全 API 方案最小可用配置，带注释说明）
+- `scripts/xiaozhi/deploy-xiaozhi-linux.sh`（Linux 一键生成含火山 ASR/TTS 配置的脚本）
+- `任务1.2-小智后端与豆包接入.md`（完整执行说明与验收清单，v2.0）
+
+## 10. 任务1.3（智控台后台管理页面）
+
+**小智开源 Admin 后台（智控台）部署方案，支持：设备管理、OTA 升级、配置管理、多用户。**
+
+- 部署方式：Docker 全模块安装（含 MySQL、Redis、Java Web、Python Server）
+- 访问地址：`http://服务器IP:8002`（部署完成后）
+- 配置 ASR/TTS 直接在智控台界面操作，无需手动改配置文件
+
+详细步骤见：`任务1.3-智控台部署与接入指南.md`
