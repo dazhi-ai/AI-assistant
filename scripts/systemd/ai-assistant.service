@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
+User=root
 WorkingDirectory=/opt/ai-assistant
 EnvironmentFile=/opt/ai-assistant/.env
 ExecStart=/opt/ai-assistant/.venv/bin/python /opt/ai-assistant/main.py
