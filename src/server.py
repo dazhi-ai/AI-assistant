@@ -337,8 +337,10 @@ async def start_server(settings: Settings) -> None:
         logger.warning("Netease API connectivity check failed at startup.")
     weather = WeatherService(
         api_key=settings.qweather_api_key,
+        api_host=settings.qweather_api_host,
         geo_base_url=settings.qweather_geo_base_url,
         weather_base_url=settings.qweather_weather_base_url,
+        use_header_auth=bool(settings.qweather_api_host),
         timeout_seconds=settings.request_timeout_seconds,
     )
     if not weather.enabled:

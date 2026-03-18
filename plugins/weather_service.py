@@ -1,4 +1,9 @@
-"""Weather service integration for 3-day forecast cards."""
+"""Weather service integration for 3-day forecast cards.
+
+支持两种配置方式（参考 https://dev.qweather.com/docs/configuration/api-config/）：
+1. 自定义 API Host（推荐）：QWEATHER_API_HOST + QWEATHER_API_KEY，使用 Header 认证
+2. 旧版公共地址：QWEATHER_GEO_BASE_URL + QWEATHER_WEATHER_BASE_URL + QWEATHER_API_KEY，使用 query key
+"""
 
 from __future__ import annotations
 
@@ -16,11 +21,21 @@ class WeatherService:
         api_key: str,
         geo_base_url: str = "https://geoapi.qweather.com/v2",
         weather_base_url: str = "https://devapi.qweather.com/v7",
+        api_host: str = "",
+        use_header_auth: bool = False,
         timeout_seconds: int = 15,
     ) -> None:
         self._api_key = api_key
-        self._geo_base_url = geo_base_url.rstrip("/")
-        self._weather_base_url = weather_base_url.rstrip("/")
+        self._api_host = (api_host or "").strip().rstrip("/")
+        self._use_header_auth = use_header_auth and bool(self._api_host)
+        if self._api_host:
+            # 自定义 API Host：路径见 https://dev.qweather.com/docs/api/geoapi/city-lookup/
+            base = f"https://{self._api_host.lstrip('https://')}"
+            self._geo_base_url = f"{base}/geo/v2"
+            self._weather_base_url = f"{base}/v7"
+        else:
+            self._geo_base_url = geo_base_url.rstrip("/")
+            self._weather_base_url = weather_base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
 
     @property
@@ -28,9 +43,10 @@ class WeatherService:
         """Whether weather API is configured."""
         return bool(self._api_key)
 
-    def _request_json_sync(self, url: str) -> dict[str, Any]:
+    def _request_json_sync(self, url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
         """Perform one GET request and parse JSON body."""
-        req = request.Request(url, method="GET")
+        req_headers = dict(headers) if headers else {}
+        req = request.Request(url, method="GET", headers=req_headers)
         try:
             with request.urlopen(req, timeout=self._timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
@@ -41,9 +57,15 @@ class WeatherService:
         except json.JSONDecodeError:
             return {"ok": False, "error": "Invalid JSON response", "url": url}
 
-    async def _request_json(self, url: str) -> dict[str, Any]:
+    async def _request_json(self, url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
         """Async wrapper around blocking HTTP call."""
-        return await asyncio.to_thread(self._request_json_sync, url)
+        return await asyncio.to_thread(self._request_json_sync, url, headers)
+
+    def _get_auth_headers(self) -> dict[str, str]:
+        """返回 Header 认证（X-QW-Api-Key），用于自定义 API Host 模式。"""
+        if self._use_header_auth:
+            return {"X-QW-Api-Key": self._api_key}
+        return {}
 
     async def get_weather_forecast(self, city_name: str) -> dict[str, Any]:
         """Return 3-day forecast for one city."""
@@ -52,11 +74,17 @@ class WeatherService:
         if not city_name:
             return {"ok": False, "error": "city is required"}
 
-        geo_query = parse.urlencode({"location": city_name, "key": self._api_key})
+        headers = self._get_auth_headers()
+        if self._use_header_auth:
+            geo_query = parse.urlencode({"location": city_name})
+        else:
+            geo_query = parse.urlencode({"location": city_name, "key": self._api_key})
         geo_url = f"{self._geo_base_url}/city/lookup?{geo_query}"
-        geo_data = await self._request_json(geo_url)
+        geo_data = await self._request_json(geo_url, headers)
         if "error" in geo_data:
             return {"ok": False, "error": geo_data["error"]}
+        if geo_data.get("code") and str(geo_data.get("code")) != "200":
+            return {"ok": False, "error": geo_data.get("code", "unknown")}
         locations = geo_data.get("location", []) or []
         if not locations:
             return {"ok": False, "error": f"未找到城市：{city_name}"}
@@ -66,11 +94,16 @@ class WeatherService:
         if not location_id:
             return {"ok": False, "error": "城市 ID 解析失败"}
 
-        weather_query = parse.urlencode({"location": location_id, "key": self._api_key})
+        if self._use_header_auth:
+            weather_query = parse.urlencode({"location": location_id})
+        else:
+            weather_query = parse.urlencode({"location": location_id, "key": self._api_key})
         weather_url = f"{self._weather_base_url}/weather/3d?{weather_query}"
-        weather_data = await self._request_json(weather_url)
+        weather_data = await self._request_json(weather_url, headers)
         if "error" in weather_data:
             return {"ok": False, "error": weather_data["error"]}
+        if weather_data.get("code") and str(weather_data.get("code")) != "200":
+            return {"ok": False, "error": weather_data.get("code", "unknown")}
         daily = weather_data.get("daily", []) or []
         if not daily:
             return {"ok": False, "error": "天气数据为空"}

@@ -26,6 +26,7 @@ class Settings:
     netease_favorite_playlist_id: str
     request_timeout_seconds: int
     qweather_api_key: str
+    qweather_api_host: str
     qweather_geo_base_url: str
     qweather_weather_base_url: str
     tts_voice: str
@@ -85,6 +86,7 @@ def load_settings() -> Settings:
     netease_favorite_playlist_id = os.getenv("NETEASE_FAVORITE_PLAYLIST_ID", "")
     request_timeout_seconds = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "15"))
     qweather_api_key = os.getenv("QWEATHER_API_KEY", "")
+    qweather_api_host = os.getenv("QWEATHER_API_HOST", "").strip()
     qweather_geo_base_url = os.getenv("QWEATHER_GEO_BASE_URL", "https://geoapi.qweather.com/v2")
     qweather_weather_base_url = os.getenv("QWEATHER_WEATHER_BASE_URL", "https://devapi.qweather.com/v7")
     tts_voice = os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
@@ -138,6 +140,7 @@ def load_settings() -> Settings:
         netease_favorite_playlist_id=netease_favorite_playlist_id,
         request_timeout_seconds=request_timeout_seconds,
         qweather_api_key=qweather_api_key,
+        qweather_api_host=qweather_api_host,
         qweather_geo_base_url=qweather_geo_base_url,
         qweather_weather_base_url=qweather_weather_base_url,
         tts_voice=tts_voice,
