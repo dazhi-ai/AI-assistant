@@ -67,7 +67,13 @@ ASR_MAX_AUDIO_BYTES=10485760
 - `TTS_PROVIDER=volc`（或 `volcengine`），并配置 `TTS_VOLC_BASE_URL`（可填 `wss://...`）+ `VOLC_APP_ID/VOLC_ACCESS_TOKEN`。
 - `TTS_VOLC_AUTH_STYLE` 支持 `auto/token`（映射为 `Bearer; token`）或 `bearer`（映射为 `Bearer token`）。
 
-## 3. 启动服务
+## 3. 知识库（外部定时写入，可选）
+
+- 配置见 `.env.example` 中 `KNOWLEDGE_*`；**`KNOWLEDGE_HTTP_PORT=0` 时默认不开放 HTTP**。
+- 开启后写入地址：`http://<HOST>:<PORT>/v1/knowledge/ingest`（需 `Bearer` 或 `X-Knowledge-Token`）。
+- 完整说明与 curl 示例：[`docs/knowledge-ingest-api.md`](docs/knowledge-ingest-api.md)。
+
+## 4. 启动服务
 
 ```bash
 python main.py
@@ -75,7 +81,7 @@ python main.py
 
 启动成功后，你可以用任意 WebSocket 客户端连接 `ws://HOST:PORT` 进行测试。
 
-## 4. WebSocket 协议（最小可用）
+## 5. WebSocket 协议（最小可用）
 
 客户端发送 `AUTH`（当 `WS_TOKEN` 非空时必须先鉴权）：
 
@@ -138,14 +144,14 @@ python main.py
 }
 ```
 
-## 5. 搜索选歌多轮示例
+## 6. 搜索选歌多轮示例
 
 1. 发送：`TEXT: 播放 稻香`
 2. 服务端返回多个候选时，会在 `TEXT` 中提示“第几首”
 3. 再发送：`TEXT: 第2首`
 4. 服务端触发 `play_music`，返回 `TOOL_RESULT`，并推送 `AUDIO_URL`
 
-## 6. 平板联调页面
+## 7. 平板联调页面
 
 已提供最小前端联调页：`web-client/index.html`。
 
@@ -165,7 +171,7 @@ python main.py
 
 页面还提供了“发送音频输入（AUDIO_INPUT）”功能，可直接上传本地音频文件，验证 ASR -> 对话 -> TTS 全链路。
 
-## 7. 老安卓兼容构建（Babel）
+## 8. 老安卓兼容构建（Babel）
 
 在 `web-client/` 下执行：
 - `npm install`
@@ -173,7 +179,7 @@ python main.py
 
 构建后会生成 `web-client/dist/js` 目录，用于老旧 WebView 的 JS 兼容版本。
 
-## 8. 非 Docker 部署
+## 9. 非 Docker 部署
 
 已提供 systemd 服务模板与部署文档：
 - 服务文件：`scripts/systemd/ai-assistant.service`、`scripts/systemd/netease-api.service`、`scripts/systemd/xiaozhi-server.service`
@@ -183,7 +189,7 @@ python main.py
 - 原始 `Binaryify/NeteaseCloudMusicApi` GitHub 仓库已不再维护代码。
 - 当前建议使用 `@neteasecloudmusicapienhanced/api` npm 包部署方式（文档已同步）。
 
-## 9. 任务1.2（小智后端 + 豆包 + 火山引擎 ASR/TTS）
+## 10. 任务1.2（小智后端 + 豆包 + 火山引擎 ASR/TTS）
 
 **方案定型：ASR/TTS 全部使用火山引擎云 API，拒绝本地模型（FunASR / GPT-SoVITS 等）。**
 
@@ -194,7 +200,7 @@ python main.py
 - `scripts/xiaozhi/deploy-xiaozhi-linux.sh`（Linux 一键生成含火山 ASR/TTS 配置的脚本）
 - `任务1.2-小智后端与豆包接入.md`（完整执行说明与验收清单，v2.0）
 
-## 10. 任务1.3（智控台后台管理页面）
+## 11. 任务1.3（智控台后台管理页面）
 
 **小智开源 Admin 后台（智控台）部署方案，支持：设备管理、OTA 升级、配置管理、多用户。**
 

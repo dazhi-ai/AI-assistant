@@ -12,6 +12,8 @@ from plugins.netease_cloud import NeteaseCloudController
 from plugins.weather_service import WeatherService
 from src.ark_client import ArkClient
 from src.assistant_service import AssistantService
+from src.knowledge_http_server import start_knowledge_http_server
+from src.knowledge_store import KnowledgeStore
 from src.asr_service import ASRService
 from src.config import Settings
 from src.protocol import build_message, parse_message
@@ -346,15 +348,52 @@ async def start_server(settings: Settings) -> None:
     if not weather.enabled:
         logger.warning("Weather service is disabled (missing QWEATHER_API_KEY).")
     tool_handler = ToolHandler(netease, weather)
-    assistant = AssistantService(ark_client=ArkClient(settings), tool_handler=tool_handler)
+    knowledge_store = KnowledgeStore(settings.knowledge_data_path)
+    assistant = AssistantService(
+        ark_client=ArkClient(settings),
+        tool_handler=tool_handler,
+        knowledge_store=knowledge_store,
+        knowledge_context_max_chars=settings.knowledge_context_max_chars,
+    )
     tts_service = TTSService(settings)
     asr_service = ASRService(settings)
     logger.info("TTS enabled: %s", tts_service.enabled)
     logger.info("ASR enabled: %s", asr_service.enabled)
+    logger.info("Knowledge file: %s", knowledge_store.path)
+
+    knowledge_tcp_server = None
+    if settings.knowledge_http_port > 0:
+        if not settings.knowledge_ingest_token:
+            logger.warning(
+                "KNOWLEDGE_HTTP_PORT=%s but KNOWLEDGE_INGEST_TOKEN is empty; HTTP ingest disabled.",
+                settings.knowledge_http_port,
+            )
+        else:
+            knowledge_tcp_server = await start_knowledge_http_server(
+                settings.host,
+                settings.knowledge_http_port,
+                knowledge_store,
+                settings.knowledge_ingest_token,
+            )
+
+    async def _serve_knowledge_http(server) -> None:
+        """在独立任务中持有 asyncio.Server，使监听协程持续运行。"""
+        async with server:
+            await asyncio.Future()
+
+    if knowledge_tcp_server is not None:
+        asyncio.create_task(_serve_knowledge_http(knowledge_tcp_server))
+
     async with websockets.serve(
         lambda ws: handle_client(ws, settings, assistant, tts_service, asr_service),
         settings.host,
         settings.port,
     ):
         logger.info("WebSocket server is running on ws://%s:%s", settings.host, settings.port)
+        if settings.knowledge_http_port > 0 and settings.knowledge_ingest_token:
+            logger.info(
+                "Knowledge ingest URL: http://%s:%s/v1/knowledge/ingest",
+                settings.host,
+                settings.knowledge_http_port,
+            )
         await asyncio.Future()

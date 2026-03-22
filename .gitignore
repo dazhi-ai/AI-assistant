@@ -8,6 +8,9 @@ venv/
 
 # Environment variable files
 .env
+# 小智推送脚本本地密钥/密码（勿提交）
+scripts/xiaozhi/push.env
+scripts/xiaozhi/*.openclaw-generated
 
 # Frontend dependencies and build artifacts
 web-client/node_modules/
@@ -23,3 +26,13 @@ services/netease-api-enhanced/
 
 # OS generated files
 Thumbs.db
+
+# Cursor 本地状态（勿提交）
+.cursor/
+
+# 含本机网易云 Cookie 等私密信息的本地工具（勿提交；请用环境变量）
+scripts/xiaozhi/get_user_id.py
+scripts/xiaozhi/test_netease_connection.py
+scripts/xiaozhi/write_netease_config.py
+scripts/xiaozhi/fix_netease_config.py
+scripts/xiaozhi/xiaozhi-config-local-tts.yaml

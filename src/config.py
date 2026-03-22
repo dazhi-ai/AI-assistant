@@ -57,6 +57,11 @@ class Settings:
     asr_model: str
     asr_language: str
     asr_max_audio_bytes: int
+    # 知识库 HTTP 写入（供外部服务器定时推送）；端口为 0 时不启动 HTTP，仅可本地读写文件
+    knowledge_http_port: int
+    knowledge_ingest_token: str
+    knowledge_data_path: str
+    knowledge_context_max_chars: int
 
 
 def _to_bool(value: str) -> bool:
@@ -123,6 +128,10 @@ def load_settings() -> Settings:
     asr_model = os.getenv("ASR_MODEL", "whisper-1")
     asr_language = os.getenv("ASR_LANGUAGE", "zh")
     asr_max_audio_bytes = int(os.getenv("ASR_MAX_AUDIO_BYTES", "10485760"))
+    knowledge_http_port = int(os.getenv("KNOWLEDGE_HTTP_PORT", "0"))
+    knowledge_ingest_token = os.getenv("KNOWLEDGE_INGEST_TOKEN", "").strip()
+    knowledge_data_path = os.getenv("KNOWLEDGE_DATA_PATH", "data/knowledge_base.jsonl").strip()
+    knowledge_context_max_chars = int(os.getenv("KNOWLEDGE_CONTEXT_MAX_CHARS", "6000"))
     return Settings(
         host=host,
         port=port,
@@ -171,6 +180,10 @@ def load_settings() -> Settings:
         asr_model=asr_model,
         asr_language=asr_language,
         asr_max_audio_bytes=asr_max_audio_bytes,
+        knowledge_http_port=knowledge_http_port,
+        knowledge_ingest_token=knowledge_ingest_token,
+        knowledge_data_path=knowledge_data_path,
+        knowledge_context_max_chars=knowledge_context_max_chars,
     )
 
 
@@ -211,4 +224,10 @@ def validate_settings(settings: Settings) -> list[str]:
         issues.append("TTS_VOLC_PITCH_RATIO must be greater than 0.")
     if settings.tts_volc_auth_style not in {"bearer", "bearer_semicolon"}:
         issues.append("TTS_VOLC_AUTH_STYLE must be 'bearer', 'token', or 'auto'.")
+    if settings.knowledge_http_port < 0 or settings.knowledge_http_port > 65535:
+        issues.append("KNOWLEDGE_HTTP_PORT must be in range 0-65535 (0 = disable HTTP ingest).")
+    if settings.knowledge_http_port > 0 and not settings.knowledge_ingest_token:
+        issues.append("KNOWLEDGE_INGEST_TOKEN is required when KNOWLEDGE_HTTP_PORT > 0.")
+    if settings.knowledge_context_max_chars < 0:
+        issues.append("KNOWLEDGE_CONTEXT_MAX_CHARS must be non-negative.")
     return issues

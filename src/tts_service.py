@@ -88,6 +88,65 @@ class TTSService:
             return "https://openspeech.bytedance.com/api/v1/tts"
         return ""
 
+    def _mask_secret(self, secret_text: str) -> str:
+        """Mask secret values for safe startup logging."""
+        value = secret_text.strip()
+        if not value:
+            return ""
+        if len(value) <= 6:
+            return "***"
+        return f"{value[:3]}***{value[-3:]}"
+
+    def startup_self_check(self) -> dict[str, object]:
+        """Return startup diagnostics for fast TTS configuration verification."""
+        check: dict[str, object] = {
+            "provider": self._provider,
+            "enabled": self.enabled,
+            "issues": [],
+        }
+        issues: list[str] = []
+
+        if self._provider == "edge":
+            check["voice"] = self._voice
+            check["rate"] = self._rate
+            check["volume"] = self._volume
+            check["edge_runtime_ready"] = edge_tts is not None
+            if edge_tts is None:
+                issues.append("edge-tts is not installed in current runtime.")
+            check["issues"] = issues
+            return check
+
+        if self._provider == "volc":
+            resolved_http_url = self._resolve_volc_http_url()
+            check["volc_http_url"] = resolved_http_url
+            check["volc_ws_url"] = (self._volc_ws_url or "").strip()
+            check["voice_type"] = self._volc_voice_type
+            check["cluster"] = self._volc_cluster
+            check["encoding"] = self._volc_encoding
+            check["auth_style"] = self._volc_auth_style
+            check["app_id_masked"] = self._mask_secret(self._volc_app_id)
+            check["access_token_masked"] = self._mask_secret(self._volc_access_token)
+            if not self._volc_app_id.strip():
+                issues.append("VOLC_APP_ID is empty.")
+            if not self._volc_access_token.strip():
+                issues.append("VOLC_ACCESS_TOKEN is empty.")
+            if not resolved_http_url:
+                issues.append("No HTTP TTS endpoint resolved from TTS_VOLC_BASE_URL/VOLC_TTS_WS_URL.")
+            elif not (resolved_http_url.startswith("http://") or resolved_http_url.startswith("https://")):
+                issues.append("Resolved TTS endpoint is not a valid HTTP URL.")
+            if not self._volc_voice_type.strip():
+                issues.append("TTS_VOLC_VOICE_TYPE is empty.")
+            if self._volc_encoding != "mp3":
+                issues.append(
+                    "TTS_VOLC_ENCODING is not mp3; current web-client expects audio/mpeg for stable playback."
+                )
+            check["issues"] = issues
+            return check
+
+        issues.append(f"Unsupported TTS_PROVIDER: {self._provider}")
+        check["issues"] = issues
+        return check
+
     def _build_volc_payload(self, text: str) -> bytes:
         """Build volc tts request payload using common V3 structure."""
         payload = {

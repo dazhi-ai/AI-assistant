@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.ark_client import ArkClient
+from src.knowledge_store import KnowledgeStore
 from src.tool_handler import ToolHandler
 
 
@@ -22,9 +23,18 @@ class PendingSongSelection:
 class AssistantService:
     """Coordinate model reasoning and plugin tool execution."""
 
-    def __init__(self, ark_client: ArkClient, tool_handler: ToolHandler) -> None:
+    def __init__(
+        self,
+        ark_client: ArkClient,
+        tool_handler: ToolHandler,
+        *,
+        knowledge_store: KnowledgeStore | None = None,
+        knowledge_context_max_chars: int = 6000,
+    ) -> None:
         self._ark_client = ark_client
         self._tool_handler = tool_handler
+        self._knowledge_store = knowledge_store
+        self._knowledge_context_max_chars = knowledge_context_max_chars
         self._pending_song_selection: dict[str, PendingSongSelection] = {}
 
     def clear_session(self, session_id: str) -> None:
@@ -167,14 +177,20 @@ class AssistantService:
             return pending_result
 
         if self._ark_client.enabled:
+            base_system = (
+                "你是AI助手。请在需要时通过工具函数控制网易云音乐。"
+                "对于“好听”优先调用 like_music；对于“收藏”优先调用 favorite_music。"
+                "对于天气类问题调用 get_weather_forecast 并传 city。"
+            )
+            kb_block = ""
+            if self._knowledge_store is not None:
+                kb_block = self._knowledge_store.build_context_block(self._knowledge_context_max_chars)
+            system_prompt = f"{base_system}\n\n{kb_block}" if kb_block else base_system
+
             model_output = self._ark_client.chat_with_tools(
                 user_text=user_text,
                 tools=self._tool_handler.tool_schemas(),
-                system_prompt=(
-                    "你是AI助手。请在需要时通过工具函数控制网易云音乐。"
-                    "对于“好听”优先调用 like_music；对于“收藏”优先调用 favorite_music。"
-                    "对于天气类问题调用 get_weather_forecast 并传 city。"
-                ),
+                system_prompt=system_prompt,
             )
             assistant_text = model_output.get("content", "") or "收到。"
             tool_calls = model_output.get("tool_calls", [])

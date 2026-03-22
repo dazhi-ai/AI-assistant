@@ -1,0 +1,10 @@
+#!/bin/bash
+# OpenClaw 宿主机：合并人设+日报并 SSH 更新小智 MySQL（由 cron 调用）
+# 注意：push.env / 本脚本须为 LF 换行；daily_news.txt / base_prompt.txt 须为 UTF-8（无 BOM）。
+set -euo pipefail
+source /opt/xiaozhi-push/push.env
+MERGED="/tmp/xiaozhi_full_prompt_$$.txt"
+python3 /opt/xiaozhi-push/merge_system_prompt_for_daily_news.py > "$MERGED"
+export PROMPT_FILE="$MERGED"
+python3 /opt/xiaozhi-push/update_agent_prompt_mysql_via_ssh.py
+rm -f "$MERGED"
