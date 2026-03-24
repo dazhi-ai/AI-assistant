@@ -1,6 +1,7 @@
 # OpenClaw（Docker）采集新闻 → SSH 更新小智智能体「今日新闻」
 
-> **OpenClaw 任务说明书（定稿 prompt 的 Markdown 版）**：[`openclaw-xiaozhi-news-task-spec.md`](openclaw-xiaozhi-news-task-spec.md)
+> **OpenClaw 任务说明书（定稿 prompt 的 Markdown 版）**：[`openclaw-xiaozhi-news-task-spec.md`](openclaw-xiaozhi-news-task-spec.md)  
+> **运维前必读（安全改造、环境变量、不入库文件、定时与编码）**：[`xiaozhi-server-deployment-notes.md`](xiaozhi-server-deployment-notes.md)
 
 ## 1. 你的目标架构（结构化理解）
 
@@ -24,7 +25,8 @@ OpenClaw 容器/任务
   → 输出 daily_news.txt（仅今日简报，UTF-8）
 宿主机编排（cron 或 OpenClaw 后置步骤）
   → merge：base_prompt.txt + daily_news.txt → full_prompt.txt
-  → 调用本仓库脚本 SSH 到小智机更新库
+  → 调用本仓库脚本 SSH 到小智机更新库（ai_agent.system_prompt）
+  → （本地模式）scp 合并全文 → 小智机 data/agent-base-prompt.txt + docker restart（见 scripts/xiaozhi/push.sh.openclaw）
 ```
 
 - **`base_prompt.txt`**：长期稳定的人设、语气、禁忌（不放日报），放在轻量机**持久卷**里，版本可控。  

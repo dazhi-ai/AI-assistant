@@ -39,6 +39,18 @@ Content-Type: application/json
 2. 地址栏或接口里通常会出现 **一长串 ID**（UUID 无横杠或带横杠，以实际为准）。  
 3. 或在已登录状态下请求：**`GET /xiaozhi/agent/list`**，从返回列表中取对应项的 `id`。
 
+#### 3.1.1 智控台页面上「看不到」智能体 ID 时（常用替代办法）
+
+不同版本前端有的**不展示** `id` 列，可按下面顺序试：
+
+| 方法 | 操作 |
+|------|------|
+| **A. 浏览器开发者工具（推荐）** | 登录智控台 → **F12** → **Network（网络）** → 勾选 **Preserve log** → 刷新页面或重新进入 **智能体列表**。在请求里筛选 **`list`**、`**agent**` 等关键字，点开 **XHR/Fetch**，在 **Response（响应）** 里看 JSON：列表里每一项通常有 **`id`** 字段（32 位无横杠或 UUID 格式，以实际为准）。进入 **编辑** 某智能体时，也可能出现 **`GET /xiaozhi/agent/详情`** 类请求，响应里同样有 `id`。 |
+| **B. 看地址栏路由** | 部分前端路由形如 **`.../agent/xxxxxxxx`** 或带 query **`?id=xxxxxxxx`**，其中 `xxxxxxxx` 即为智能体 ID（以你实际 URL 为准）。 |
+| **C. Knife4j / OpenAPI** | 浏览器打开 **`http://<智控台IP>:8002/xiaozhi/doc.html`**，搜索「智能体」「列表」等，找到 **`GET /xiaozhi/agent/list`**，用页面 **调试** 功能（需先带 Bearer Token，可从 Network 里复制 `Authorization`）发起请求，从返回 JSON 取 `id`。 |
+| **D. 直接查 MySQL（最稳）** | 在小智宿主机上对 **`xiaozhi_esp32_server.ai_agent`** 执行查询（容器名以你环境为准）：<br>`SELECT id, CHAR_LENGTH(system_prompt) AS len, LEFT(system_prompt, 80) AS intro_hint FROM ai_agent;`<br>根据 **提示词前缀** 或 **只有一条记录** 判断哪一个是你在用的智能体。勿把整段 `system_prompt` 贴到公开场合。 |
+| **E. 看 OpenClaw `push.env`** | 若已跑通过推送脚本，轻量机上 **`/opt/xiaozhi-push/push.env`** 里会有 **`XIAOZHI_AGENT_ID=`**，即为当前定时任务写入的目标 ID；需再与设备实际绑定智能体对照（见运维文档「设备绑定」排查）。 |
+
 ### 3.2 Token（难点说明）
 
 登录接口为 **`POST /xiaozhi/user/login`**，上游实现里密码需 **SM2 加密**，并配合**图形验证码**，因此用 `curl` 一行登录**不现实**。

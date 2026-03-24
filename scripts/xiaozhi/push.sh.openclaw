@@ -1,10 +1,59 @@
 #!/bin/bash
-# OpenClaw 宿主机：合并人设+日报并 SSH 更新小智 MySQL（由 cron 调用）
-# 注意：push.env / 本脚本须为 LF 换行；daily_news.txt / base_prompt.txt 须为 UTF-8（无 BOM）。
+# OpenClaw 宿主机：合并人设+日报 → SSH 更新小智 MySQL →（可选）同步到本地模式模板文件并重启容器
+# 注意：push.env / 本脚本须为 LF；daily_news.txt / base_prompt.txt / 合并结果须为 UTF-8（无 BOM）。
+#
+# push.env 常用变量（除原有 SSH_*/MYSQL_* 外，可选）：
+#   SYNC_LOCAL_PROMPT=1         # 默认 1：同步 Jinja 外壳 + 合并正文 + 注入 .config.yaml 的 prompt
+#   XIAOZHI_PROMPT_REMOTE_PATH   # 小智宿主机上 agent-base-prompt.txt 绝对路径；默认见下方
+#   XIAOZHI_JINJA_TEMPLATE       # OpenClaw 上外壳文件，须含 {{ base_prompt }}；默认 /opt/xiaozhi-push/agent-base-prompt.jinja.txt
+#   INJECT_LOCAL_PROMPT_PY       # OpenClaw 上 inject_local_prompt_config.py；默认 /opt/xiaozhi-push/inject_local_prompt_config.py
+#   RESTART_XIAOZHI_AFTER_SYNC=1 # 默认 1：同步后 docker restart xiaozhi-esp32-server
+#   XIAOZHI_DOCKER_CONTAINER      # 默认 xiaozhi-esp32-server
+#
+# 说明：manager-api.url 为空时，语音链路读的是 .config.yaml 的 prompt，不是智控台页面；
+# agent-base-prompt.txt 仅为 Jinja 模板，官方以 {{ base_prompt }} 注入 prompt。若把整段人设 scp
+# 进 agent-base 却不写 config prompt，仍会使用默认「小智/小志」短文，与控制台不一致。
 set -euo pipefail
 source /opt/xiaozhi-push/push.env
+
 MERGED="/tmp/xiaozhi_full_prompt_$$.txt"
 python3 /opt/xiaozhi-push/merge_system_prompt_for_daily_news.py > "$MERGED"
 export PROMPT_FILE="$MERGED"
 python3 /opt/xiaozhi-push/update_agent_prompt_mysql_via_ssh.py
+
+# ---------- 本地模式：合并全文 → 小智机 data/agent-base-prompt.txt ----------
+SYNC_LOCAL="${SYNC_LOCAL_PROMPT:-1}"
+RESTART_DOCKER="${RESTART_XIAOZHI_AFTER_SYNC:-1}"
+CONTAINER_NAME="${XIAOZHI_DOCKER_CONTAINER:-xiaozhi-esp32-server}"
+DEFAULT_REMOTE_PATH="/opt/xiaozhi-esp32-server/main/xiaozhi-server/data/agent-base-prompt.txt"
+REMOTE_PATH="${XIAOZHI_PROMPT_REMOTE_PATH:-$DEFAULT_REMOTE_PATH}"
+REMOTE_DIR=$(dirname "$REMOTE_PATH")
+REMOTE_BODY="${XIAOZHI_MERGED_BODY_REMOTE_PATH:-$REMOTE_DIR/.xiaozhi_merged_prompt_body.txt}"
+JINJA_SRC="${XIAOZHI_JINJA_TEMPLATE:-/opt/xiaozhi-push/agent-base-prompt.jinja.txt}"
+INJECT_PY="${INJECT_LOCAL_PROMPT_PY:-/opt/xiaozhi-push/inject_local_prompt_config.py}"
+
+if [[ "$SYNC_LOCAL" == "1" || "$SYNC_LOCAL" == "true" || "$SYNC_LOCAL" == "yes" ]]; then
+  KEY_OPT=()
+  if [[ -n "${SSH_KEY_FILE:-}" ]]; then
+    KEY_OPT=( -i "$SSH_KEY_FILE" )
+  fi
+  PORT="${SSH_PORT:-22}"
+  echo "[push.sh] scp merged body -> ${SSH_USER}@${SSH_HOST}:${REMOTE_BODY}"
+  scp -o BatchMode=yes -o ConnectTimeout=30 "${KEY_OPT[@]}" -P "$PORT" "$MERGED" "${SSH_USER}@${SSH_HOST}:${REMOTE_BODY}"
+  echo "[push.sh] scp jinja shell -> ${SSH_USER}@${SSH_HOST}:${REMOTE_PATH}"
+  scp -o BatchMode=yes -o ConnectTimeout=30 "${KEY_OPT[@]}" -P "$PORT" "$JINJA_SRC" "${SSH_USER}@${SSH_HOST}:${REMOTE_PATH}"
+  echo "[push.sh] scp inject script -> ${SSH_USER}@${SSH_HOST}:/tmp/inject_local_prompt_config.py"
+  scp -o BatchMode=yes -o ConnectTimeout=30 "${KEY_OPT[@]}" -P "$PORT" "$INJECT_PY" "${SSH_USER}@${SSH_HOST}:/tmp/inject_local_prompt_config.py"
+  echo "[push.sh] inject prompt into data/.config.yaml inside ${CONTAINER_NAME}"
+  ssh -o BatchMode=yes -o ConnectTimeout=30 "${KEY_OPT[@]}" -p "$PORT" "${SSH_USER}@${SSH_HOST}" \
+    "docker cp /tmp/inject_local_prompt_config.py ${CONTAINER_NAME}:/tmp/inject_local_prompt_config.py && \
+     docker exec ${CONTAINER_NAME} python3 /tmp/inject_local_prompt_config.py"
+  if [[ "$RESTART_DOCKER" == "1" || "$RESTART_DOCKER" == "true" || "$RESTART_DOCKER" == "yes" ]]; then
+    echo "[push.sh] ssh restart ${CONTAINER_NAME}"
+    ssh -o BatchMode=yes -o ConnectTimeout=30 "${KEY_OPT[@]}" -p "$PORT" "${SSH_USER}@${SSH_HOST}" \
+      "docker restart ${CONTAINER_NAME}"
+  fi
+fi
+
 rm -f "$MERGED"
+echo "[push.sh] done"

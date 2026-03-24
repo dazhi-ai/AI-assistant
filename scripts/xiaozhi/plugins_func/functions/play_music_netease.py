@@ -19,11 +19,13 @@ play_music 插件 - 网易云音乐版本
 """
 
 import os
+import time
 import uuid
 import random
 import json
 import urllib.request
 import urllib.parse
+from pathlib import Path
 
 from plugins_func.register import register_function, ToolType, ActionResponse, Action
 from core.utils.dialogue import Message
@@ -121,12 +123,67 @@ play_music_function_desc = {
     },
 }
 
+# 小智 core 在连接初始化时会 `from plugins_func.functions.play_music import initialize_music_handler`。
+# 若本文件作为 play_music.py 部署却缺少该符号，会导致组件初始化失败并回退「快速提示词」，
+# 对话侧将丢失智控台/合并后含「今日新闻简报」的正文（表现为「找不到新闻」）。
+MUSIC_CACHE: dict = {}
+
+
+def _get_music_files_for_init(music_dir: str, music_ext) -> tuple[list, list]:
+    """扫描本地音乐目录；与上游 play_music.initialize_music_handler 行为对齐。"""
+    root = Path(music_dir)
+    files: list[str] = []
+    names: list[str] = []
+    if not root.is_dir():
+        return files, names
+    if isinstance(music_ext, str):
+        ext_tuple = (music_ext,)
+    else:
+        ext_tuple = tuple(music_ext) if music_ext else (".mp3", ".wav", ".p3")
+    for f in root.rglob("*"):
+        if f.is_file() and f.suffix.lower() in ext_tuple:
+            rel = str(f.relative_to(root))
+            files.append(rel)
+            names.append(os.path.splitext(rel)[0])
+    return files, names
+
+
+def initialize_music_handler(conn: "ConnectionHandler"):
+    """供 core 调用：预热本地音乐缓存（网易云主路径仍走 play_music 内逻辑）。"""
+    global MUSIC_CACHE
+    if MUSIC_CACHE == {}:
+        plugins_config = conn.config.get("plugins", {}) if conn.config else {}
+        if "play_music" in plugins_config:
+            raw = plugins_config["play_music"]
+            if isinstance(raw, str):
+                try:
+                    mc = json.loads(raw)
+                except Exception:
+                    mc = {}
+            else:
+                mc = raw if isinstance(raw, dict) else {}
+            MUSIC_CACHE["music_config"] = mc
+            MUSIC_CACHE["music_dir"] = os.path.abspath(mc.get("music_dir", "./music"))
+            MUSIC_CACHE["music_ext"] = mc.get("music_ext", (".mp3", ".wav", ".p3"))
+            MUSIC_CACHE["refresh_time"] = int(mc.get("refresh_time", 60) or 60)
+        else:
+            MUSIC_CACHE["music_dir"] = os.path.abspath("./music")
+            MUSIC_CACHE["music_ext"] = (".mp3", ".wav", ".p3")
+            MUSIC_CACHE["refresh_time"] = 60
+        MUSIC_CACHE["music_files"], MUSIC_CACHE["music_file_names"] = (
+            _get_music_files_for_init(
+                MUSIC_CACHE["music_dir"], MUSIC_CACHE["music_ext"]
+            )
+        )
+        MUSIC_CACHE["scan_time"] = time.time()
+    return MUSIC_CACHE
+
 
 # ============================================================
 # 配置读取
 # ============================================================
 def _get_netease_config(conn: "ConnectionHandler") -> dict:
-    """读取网易云插件配置，优先使用文件顶部的硬编码值，conn.config 可覆盖。"""
+    """读取网易云插件配置：conn.config 中 plugins.play_music 优先，否则用环境变量默认值。"""
     plugins_config = conn.config.get("plugins", {}) if conn.config else {}
     netease_cfg = plugins_config.get("play_music", {})
     if isinstance(netease_cfg, str):

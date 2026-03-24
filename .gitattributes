@@ -1,0 +1,2 @@
+# Shell on OpenClaw must be LF; Windows scp of CRLF breaks bash (fi^M → syntax error).
+scripts/xiaozhi/push.sh.openclaw text eol=lf
