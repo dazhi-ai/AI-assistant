@@ -20,7 +20,7 @@ GET_WEATHER_FUNCTION_DESC = {
         "description": (
             "获取某个地点的天气、未来7天天气概况，以及未来24小时内可能下雨的大致时间。"
             "如果用户问今天会不会下雨、几点下雨、晚上会不会下雨、明早会不会下雨、"
-            "下午三点到六点会不会下雨，也调用这个函数。"
+            "下午三点到六点会不会下雨、几点几分下雨、雨什么时候停，也调用这个函数。"
             "用户应提供一个位置，比如用户说杭州天气，参数为：杭州。"
             "如果用户没有指明地点，说“天气怎么样”“今天天气如何”，location 参数为空。"
             "如果用户问的是具体时间段，请把原始时间诉求放进 time_query。"
@@ -178,6 +178,22 @@ def fetch_hourly_weather(location_id, api_key, api_host):
     return response.get("hourly", []) or []
 
 
+def fetch_minutely_weather(lon: str, lat: str, api_key: str, api_host: str):
+    if not lon or not lat:
+        return {}
+    url, headers = _build_api_url(
+        api_host,
+        "/v7/minutely/5m",
+        {"location": f"{lon},{lat}"},
+        api_key,
+    )
+    response = _request_json(url, headers)
+    if response.get("code") not in (None, "200", 200):
+        logger.bind(tag=TAG).error(f"获取分钟级降水失败，原因：{response.get('code')}")
+        return {}
+    return response
+
+
 def fetch_weather_page(url):
     response = requests.get(url, headers=HEADERS, timeout=15)
     return BeautifulSoup(response.text, "html.parser") if response.ok else None
@@ -298,6 +314,97 @@ def _build_hourly_brief(hourly_list: list[dict]) -> str:
         else:
             useful.append(f"{label} {text} {temp}°C")
     return "未来几小时：\n" + "\n".join(f"  · {line}" for line in useful)
+
+
+def _format_minute_label(fx_time: str) -> str:
+    if not fx_time:
+        return "未知时间"
+    if len(fx_time) >= 16:
+        return fx_time[11:16]
+    return _format_hour_label(fx_time)
+
+
+def _is_rainy_minute(item: dict) -> bool:
+    precip = str(item.get("precip", "") or "0").strip()
+    precip_type = str(item.get("type", "") or "").strip().lower()
+    try:
+        precip_value = float(precip)
+    except ValueError:
+        precip_value = 0.0
+    return precip_value > 0 or precip_type in {"rain", "snow"}
+
+
+def _build_minutely_summary(minutely_data: dict) -> str:
+    if not minutely_data:
+        return ""
+    items = minutely_data.get("minutely", []) or []
+    if not items:
+        return ""
+
+    summary = str(minutely_data.get("summary", "") or "").strip()
+    rainy_items = [item for item in items if _is_rainy_minute(item)]
+    if not rainy_items:
+        if summary:
+            return f"未来2小时分钟级降水：{summary}"
+        return "未来2小时分钟级降水：暂无明显降水。"
+
+    first_rain = _format_minute_label(rainy_items[0].get("fxTime", ""))
+    last_rain = _format_minute_label(rainy_items[-1].get("fxTime", ""))
+    if summary:
+        return f"未来2小时分钟级降水：{summary} 最早可能在 {first_rain} 开始，预计到 {last_rain} 前后结束。"
+    return f"未来2小时分钟级降水：最早可能在 {first_rain} 开始，预计到 {last_rain} 前后结束。"
+
+
+def _analyze_minutely_target(minutely_data: dict, time_query: str) -> str:
+    if not minutely_data or not time_query:
+        return ""
+    query = str(time_query).strip()
+    if not query:
+        return ""
+
+    items = minutely_data.get("minutely", []) or []
+    if not items:
+        return ""
+
+    rainy_items = [item for item in items if _is_rainy_minute(item)]
+
+    if "雨什么时候停" in query or "什么时候停雨" in query or "什么时候停" in query:
+        if not rainy_items:
+            return "未来2小时看，暂无明显降雨，所以也没有明确的停雨时间。"
+        return f"按分钟级降水看，这波雨大约会在 {_format_minute_label(rainy_items[-1].get('fxTime', ''))} 前后停。"
+
+    minute_match = re.search(r"(\d{1,2})\s*点\s*(\d{1,2})?\s*分?", query)
+    if minute_match:
+        ask_hour = int(minute_match.group(1))
+        ask_minute = int(minute_match.group(2) or "0")
+        best_item = None
+        best_gap = None
+        for item in items:
+            fx_time = str(item.get("fxTime", "") or "")
+            if len(fx_time) < 16:
+                continue
+            try:
+                item_hour = int(fx_time[11:13])
+                item_minute = int(fx_time[14:16])
+            except ValueError:
+                continue
+            gap = abs((item_hour * 60 + item_minute) - (ask_hour * 60 + ask_minute))
+            if best_gap is None or gap < best_gap:
+                best_gap = gap
+                best_item = item
+        if best_item is not None:
+            precip = str(best_item.get("precip", "0") or "0")
+            label = _format_minute_label(best_item.get("fxTime", ""))
+            if _is_rainy_minute(best_item):
+                return f"按分钟级降水看，{label} 前后有降水，5分钟累计降水量约 {precip} 毫米。"
+            return f"按分钟级降水看，{label} 前后暂无明显降水。"
+
+    if "几分下雨" in query or "什么时候下雨" in query or "多久后下雨" in query:
+        if not rainy_items:
+            return "按分钟级降水看，未来2小时暂无明显降雨。"
+        return f"按分钟级降水看，最早可能在 {_format_minute_label(rainy_items[0].get('fxTime', ''))} 开始降雨。"
+
+    return ""
 
 
 def _get_hour_and_date(item: dict):
@@ -474,6 +581,12 @@ def get_weather(
 
     soup = fetch_weather_page(city_info.get("fxLink", ""))
     hourly_list = fetch_hourly_weather(city_info.get("id", ""), api_key, api_host)
+    minutely_data = fetch_minutely_weather(
+        city_info.get("lon", ""),
+        city_info.get("lat", ""),
+        api_key,
+        api_host,
+    )
 
     weather_report = ""
     if soup:
@@ -496,16 +609,25 @@ def get_weather(
     weather_report += "\n未来24小时降雨提示：\n"
     weather_report += _build_rain_summary(hourly_list) + "\n"
 
+    minutely_summary = _build_minutely_summary(minutely_data)
+    if minutely_summary:
+        weather_report += "\n未来2小时分钟级降水：\n"
+        weather_report += minutely_summary + "\n"
+
+    minutely_target = _analyze_minutely_target(minutely_data, time_query)
     target_summary = _analyze_target_window(hourly_list, time_query)
-    if target_summary:
+    if minutely_target or target_summary:
         weather_report += "\n重点时段判断：\n"
-        weather_report += target_summary + "\n"
+        if minutely_target:
+            weather_report += minutely_target + "\n"
+        if target_summary:
+            weather_report += target_summary + "\n"
 
     hourly_brief = _build_hourly_brief(hourly_list)
     if hourly_brief:
         weather_report += "\n" + hourly_brief + "\n"
 
-    weather_report += "\n（如需更具体的下雨时间，可以直接问我：今晚会不会下雨、明早会不会下雨、下午三点到六点会不会下雨。）"
+    weather_report += "\n（如需更具体的下雨时间，可以直接问我：几点几分下雨、雨什么时候停、今晚会不会下雨、下午三点到六点会不会下雨。）"
 
     cache_manager.set(CacheType.WEATHER, weather_cache_key, weather_report)
     return ActionResponse(Action.REQLLM, weather_report, None)
