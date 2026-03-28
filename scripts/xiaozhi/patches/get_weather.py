@@ -20,7 +20,8 @@ GET_WEATHER_FUNCTION_DESC = {
         "description": (
             "获取某个地点的天气、未来7天天气概况，以及未来24小时内可能下雨的大致时间。"
             "如果用户问今天会不会下雨、几点下雨、晚上会不会下雨、明早会不会下雨、"
-            "下午三点到六点会不会下雨、几点几分下雨、雨什么时候停，也调用这个函数。"
+            "下午三点到六点会不会下雨、几点几分下雨、雨什么时候停、要不要带伞、"
+            "未来一小时会不会下雨、出门会不会淋雨，也调用这个函数。"
             "用户应提供一个位置，比如用户说杭州天气，参数为：杭州。"
             "如果用户没有指明地点，说“天气怎么样”“今天天气如何”，location 参数为空。"
             "如果用户问的是具体时间段，请把原始时间诉求放进 time_query。"
@@ -367,11 +368,39 @@ def _analyze_minutely_target(minutely_data: dict, time_query: str) -> str:
         return ""
 
     rainy_items = [item for item in items if _is_rainy_minute(item)]
+    summary = str(minutely_data.get("summary", "") or "").strip()
+
+    def _slice_by_count(count: int):
+        return items[:count]
+
+    def _umbrella_advice(label: str, sample_items: list[dict]) -> str:
+        rainy_sample = [item for item in sample_items if _is_rainy_minute(item)]
+        if rainy_sample:
+            first_label = _format_minute_label(rainy_sample[0].get("fxTime", ""))
+            return f"关于“{query}”：{label}有降雨风险，建议带伞，最早可能在 {first_label} 前后开始下雨。"
+        if summary:
+            return f"关于“{query}”：{label}暂无明显降水，当前分钟级提示为：{summary}，可以先不带伞。"
+        return f"关于“{query}”：{label}暂无明显降水，可以先不带伞。"
 
     if "雨什么时候停" in query or "什么时候停雨" in query or "什么时候停" in query:
         if not rainy_items:
             return "未来2小时看，暂无明显降雨，所以也没有明确的停雨时间。"
         return f"按分钟级降水看，这波雨大约会在 {_format_minute_label(rainy_items[-1].get('fxTime', ''))} 前后停。"
+
+    if "未来半小时" in query or "半小时内" in query:
+        return _umbrella_advice("未来半小时", _slice_by_count(6))
+
+    if "未来一小时" in query or "一小时内" in query:
+        return _umbrella_advice("未来1小时", _slice_by_count(12))
+
+    if "要不要带伞" in query or "带伞" in query:
+        return _umbrella_advice("未来2小时", items)
+
+    if "出门" in query or "淋雨" in query:
+        return _umbrella_advice("接下来1小时", _slice_by_count(12))
+
+    if "上班路上" in query or "下班路上" in query or "路上" in query:
+        return _umbrella_advice("路上这段时间", _slice_by_count(12))
 
     minute_match = re.search(r"(\d{1,2})\s*点\s*(\d{1,2})?\s*分?", query)
     if minute_match:
@@ -628,6 +657,7 @@ def get_weather(
         weather_report += "\n" + hourly_brief + "\n"
 
     weather_report += "\n（如需更具体的下雨时间，可以直接问我：几点几分下雨、雨什么时候停、今晚会不会下雨、下午三点到六点会不会下雨。）"
+    weather_report += "\n（也可以直接问我：未来一小时会不会下雨、出门要不要带伞、上班路上会不会淋雨。）"
 
     cache_manager.set(CacheType.WEATHER, weather_cache_key, weather_report)
     return ActionResponse(Action.REQLLM, weather_report, None)
