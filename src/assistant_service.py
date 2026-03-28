@@ -95,17 +95,21 @@ class AssistantService:
 
     def _fallback_response(self, user_text: str) -> dict[str, Any]:
         """Return deterministic fallback when Ark API is not configured."""
-        if "天气" in user_text:
-            city = user_text.replace("天气", "").replace("查询", "").replace("查", "").strip()
-            city = city or "北京"
+        if self._is_weather_query(user_text):
+            city = self._extract_weather_city(user_text) or "北京"
+            time_query = self._extract_weather_time_query(user_text)
+            query_label = "降雨情况" if time_query else "天气"
             return {
-                "assistant_text": f"正在查询{city}未来3天天气。",
+                "assistant_text": f"正在查询{city}{query_label}。",
                 "tool_calls": [
                     {
                         "id": "fallback-weather",
                         "function": {
                             "name": "get_weather_forecast",
-                            "arguments": json.dumps({"city": city}, ensure_ascii=False),
+                            "arguments": json.dumps(
+                                {"city": city, "time_query": time_query},
+                                ensure_ascii=False,
+                            ),
                         },
                     }
                 ],
@@ -170,6 +174,83 @@ class AssistantService:
             }
         return {"assistant_text": f"你说的是：{user_text}", "tool_calls": []}
 
+    @staticmethod
+    def _is_weather_query(user_text: str) -> bool:
+        """Detect whether the user is asking about weather or rain."""
+        keywords = (
+            "天气",
+            "下雨",
+            "降雨",
+            "降水",
+            "带伞",
+            "淋雨",
+            "雨什么时候停",
+            "什么时候停雨",
+            "几点下雨",
+            "几分下雨",
+            "会不会下雨",
+            "下不下雨",
+            "有雨吗",
+        )
+        return any(keyword in user_text for keyword in keywords)
+
+    @staticmethod
+    def _extract_weather_city(user_text: str) -> str:
+        """Guess the city portion from a casual Chinese weather question."""
+        normalized = re.sub(r"[，。！？!?]", "", user_text).strip()
+        normalized = re.sub(
+            r"^(帮我|请问|麻烦|麻烦你|帮忙|查一下|查查|查询一下|查询|看看|我想知道|想知道|告诉我|问一下)+",
+            "",
+            normalized,
+        )
+        patterns = [
+            r"(?:查|查询|看看)?([A-Za-z\u4e00-\u9fff]{2,20}?)(?:天气|会不会|下不下|有雨|几点|几分|什么时候|带伞|淋雨|降雨|降水)",
+            r"(?:查|查询|看看)?([A-Za-z\u4e00-\u9fff]{2,20}?)(?:今天|今晚|明天|明早|明晚|下午|上午|中午|傍晚|凌晨|未来|现在)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, normalized)
+            if match:
+                candidate = match.group(1).strip()
+                if candidate not in {"今天", "今晚", "明天", "明早", "未来", "现在"}:
+                    return candidate
+        if "天气" in normalized:
+            candidate = normalized.replace("天气", "").replace("查询", "").replace("查", "").strip()
+            return candidate
+        return ""
+
+    @staticmethod
+    def _extract_weather_time_query(user_text: str) -> str:
+        """Preserve the original rain/time concern for the weather tool."""
+        keywords = (
+            "下雨",
+            "降雨",
+            "降水",
+            "带伞",
+            "淋雨",
+            "雨什么时候停",
+            "什么时候停雨",
+            "几点",
+            "几分",
+            "未来一小时",
+            "未来半小时",
+            "半小时",
+            "今晚",
+            "今夜",
+            "明早",
+            "明晚",
+            "下午",
+            "上午",
+            "中午",
+            "傍晚",
+            "凌晨",
+            "会不会",
+            "下不下",
+            "有雨吗",
+        )
+        if any(keyword in user_text for keyword in keywords):
+            return user_text.strip()
+        return ""
+
     async def process_user_text(self, session_id: str, user_text: str) -> dict[str, Any]:
         """Produce assistant reply and optional tool execution results."""
         pending_result = await self._resolve_pending_selection(session_id, user_text)
@@ -181,6 +262,8 @@ class AssistantService:
                 "你是AI助手。请在需要时通过工具函数控制网易云音乐。"
                 "对于“好听”优先调用 like_music；对于“收藏”优先调用 favorite_music。"
                 "对于天气类问题调用 get_weather_forecast 并传 city。"
+                "如果用户在问几点几分下雨、未来一小时会不会下雨、雨什么时候停、要不要带伞、"
+                "今晚/明早/下午会不会下雨等问题，也调用 get_weather_forecast，并把原始时间诉求放进 time_query。"
             )
             kb_block = ""
             if self._knowledge_store is not None:
@@ -237,6 +320,10 @@ class AssistantService:
                     continue
                 if not weather_data.get("ok"):
                     assistant_text = f"天气查询失败：{weather_data.get('error', '未知错误')}"
+                    continue
+                answer_text = str(weather_data.get("answer_text", "") or "").strip()
+                if answer_text:
+                    assistant_text = answer_text
                     continue
                 city_name = weather_data.get("city", "")
                 forecast_items = weather_data.get("forecast", [])

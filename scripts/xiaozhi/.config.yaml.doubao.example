@@ -38,3 +38,9 @@ Intent:
     functions:
       - get_weather
       - play_music
+
+plugins:
+  get_weather:
+    api_key: 你的QWEATHER_API_KEY
+    api_host: 你的QWEATHER_API_HOST
+    default_location: 广州

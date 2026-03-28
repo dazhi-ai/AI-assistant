@@ -24,10 +24,20 @@ class ToolHandler:
                 "type": "function",
                 "function": {
                     "name": "get_weather_forecast",
-                    "description": "Get 3-day weather forecast card by city name.",
+                    "description": (
+                        "Get weather forecast, rain timing, and minutely precipitation by city name. "
+                        "Use this for weather, rain start time, rain stop time, umbrella advice, "
+                        "and questions like what time it will rain."
+                    ),
                     "parameters": {
                         "type": "object",
-                        "properties": {"city": {"type": "string"}},
+                        "properties": {
+                            "city": {"type": "string"},
+                            "time_query": {
+                                "type": "string",
+                                "description": "Original user time/rain concern such as 今晚、几点几分下雨、雨什么时候停。",
+                            },
+                        },
                         "required": ["city"],
                     },
                 },
@@ -128,7 +138,10 @@ class ToolHandler:
 
             try:
                 if call_name == "get_weather_forecast":
-                    result = await self._weather.get_weather_forecast(city_name=str(args.get("city", "")))
+                    result = await self._weather.get_weather_forecast(
+                        city_name=str(args.get("city", "")),
+                        time_query=str(args.get("time_query", "")),
+                    )
                 elif call_name == "get_netease_login_qrcode":
                     result = await self._netease.get_login_qrcode()
                 elif call_name == "check_netease_login_status":

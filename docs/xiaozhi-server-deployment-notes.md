@@ -99,6 +99,51 @@
 仍按文件头注释流程：`scp` → `docker cp` → 删容器内 `__pycache__` → `docker restart xiaozhi-esp32-server`。  
 若与 `abortHandle` 等补丁配合，见 `scripts/xiaozhi/patches/README-netease-playback.md`。
 
+### 3.4 和风天气 `get_weather` 插件（分钟级降水）
+
+若你希望用户直接问 **「几点几分下雨」**、**「雨什么时候停」**、**「未来一小时会不会下雨」**、**「要不要带伞」**，则线上小智需使用**带分钟级降水逻辑**的 `get_weather.py`。
+
+#### 当前线上配置落点
+
+- **配置文件**：`/opt/xiaozhi-esp32-server/main/xiaozhi-server/data/.config.yaml`
+- **插件配置键**：`plugins.get_weather.api_key`、`plugins.get_weather.api_host`、`plugins.get_weather.default_location`
+- **插件源码（宿主机）**：`/opt/xiaozhi-esp32-server/main/xiaozhi-server/plugins_func/functions/get_weather.py`
+- **插件生效路径（容器内）**：`/opt/xiaozhi-esp32-server/plugins_func/functions/get_weather.py`
+
+#### 判定是否为新版分钟级插件
+
+新版插件通常应包含这些标记：
+
+- `fetch_minutely_weather`
+- `time_query`
+- 分钟级接口路径 `/v7/minutely/5m`
+- 对「雨什么时候停 / 几分下雨 / 带伞」等问法的判断逻辑
+
+若线上文件里**没有**这些标记，说明仍是旧版，仅能回答基础天气或粗粒度降雨判断。
+
+#### 线上部署步骤（推荐）
+
+1. 将仓库中的 `scripts/xiaozhi/patches/get_weather.py` 上传到服务器临时目录，例如 `/tmp/get_weather.py`
+2. 先备份宿主机旧文件，再覆盖宿主机源码路径
+3. 再执行 `docker cp` 覆盖容器内生效路径
+4. 删除宿主机与容器内相关 `__pycache__`
+5. 重启 `xiaozhi-esp32-server`
+
+#### 快速验证
+
+可在服务器上直接用当前 `data/.config.yaml` 中的 `api_key/api_host` 发起和风天气请求，至少核对：
+
+- `GeoAPI` 返回 `code=200`
+- `weather/24h` 返回 `code=200`
+- `minutely/5m` 返回 `code=200`
+- `minutely` 数组非空
+
+若以上都正常，但设备仍答不出「几点几分下雨 / 雨什么时候停」，优先检查：
+
+1. 运行中的容器是否已重启并加载到新插件
+2. 设备当前绑定的智能体是否确实走这台小智服务
+3. 是否存在上游缓存或设备未重连
+
 ---
 
 ## 4. OpenClaw 宿主机：`daily_news.txt` 与 `push.sh`

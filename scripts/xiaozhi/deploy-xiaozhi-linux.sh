@@ -10,7 +10,9 @@ set -euo pipefail
 #       <ARK_API_KEY> \
 #       <VOLC_APP_ID> \
 #       <VOLC_ACCESS_TOKEN> \
-#       [SERVER_IP]
+#       [SERVER_IP] \
+#       [QWEATHER_API_KEY] \
+#       [QWEATHER_API_HOST]
 #
 # 参数说明：
 #   $1  INSTALL_DIR        - xiaozhi-esp32-server 源码根目录（需提前 git clone）
@@ -18,6 +20,8 @@ set -euo pipefail
 #   $3  VOLC_APP_ID        - 火山引擎语音服务 App ID
 #   $4  VOLC_ACCESS_TOKEN  - 火山引擎语音服务 Access Token
 #   $5  SERVER_IP          - （可选）服务器局域网 IP，默认 127.0.0.1
+#   $6  QWEATHER_API_KEY   - （可选）和风天气 API Key；为空时天气函数会提示未配置
+#   $7  QWEATHER_API_HOST  - （可选）和风天气自定义 API Host，推荐填写
 #
 # 前提：
 #   - 已安装 conda
@@ -31,6 +35,8 @@ ARK_API_KEY="${2:-}"
 VOLC_APP_ID="${3:-}"
 VOLC_ACCESS_TOKEN="${4:-}"
 SERVER_IP="${5:-127.0.0.1}"
+QWEATHER_API_KEY="${6:-}"
+QWEATHER_API_HOST="${7:-}"
 
 # ── 参数校验 ──────────────────────────────────────────────────────────────────
 if [[ -z "${ARK_API_KEY}" ]]; then
@@ -117,6 +123,12 @@ Intent:
       - get_weather
       - play_music
       - open_app
+
+plugins:
+  get_weather:
+    api_key: ${QWEATHER_API_KEY}
+    api_host: ${QWEATHER_API_HOST}
+    default_location: 广州
 EOF
 
 # ── 输出结果 ───────────────────────────────────────────────────────────────────
@@ -131,6 +143,11 @@ echo "  conda activate xiaozhi-esp32-server"
 echo "  cd ${XIAOZHI_DIR}"
 echo "  python app.py"
 echo ""
+if [[ -z "${QWEATHER_API_KEY}" ]]; then
+  echo "[WARN] 未传入 QWEATHER_API_KEY：天气函数已启用，但实际查询会提示未配置。"
+  echo "       如需支持“几点几分下雨 / 雨什么时候停”，请补充第 6、7 个参数或手动编辑 data/.config.yaml。"
+  echo ""
+fi
 echo "启动成功标志（日志中出现以下内容）："
 echo "  OTA  地址: http://${SERVER_IP}:8003/xiaozhi/ota/"
 echo "  WS   地址: ws://${SERVER_IP}:8000/xiaozhi/v1/"

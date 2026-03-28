@@ -66,3 +66,13 @@ Intent:
       - get_weather
       - play_music
       - open_app
+
+# ─── 插件配置 ──────────────────────────────────────────────────────
+# 和风天气分钟级降水：
+#   参考文档：https://dev.qweather.com/docs/api/minutely/minutely-precipitation/
+#   推荐填写控制台里的自定义 API Host + API Key
+plugins:
+  get_weather:
+    api_key: 填入你的QWEATHER_API_KEY
+    api_host: 填入你的QWEATHER_API_HOST
+    default_location: 广州

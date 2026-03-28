@@ -29,6 +29,7 @@ NETEASE_USER_ID=
 NETEASE_FAVORITE_PLAYLIST_ID=
 REQUEST_TIMEOUT_SECONDS=15
 QWEATHER_API_KEY=
+QWEATHER_API_HOST=
 QWEATHER_GEO_BASE_URL=https://geoapi.qweather.com/v2
 QWEATHER_WEATHER_BASE_URL=https://devapi.qweather.com/v7
 TTS_VOICE=zh-CN-XiaoxiaoNeural
@@ -120,6 +121,7 @@ python main.py
 服务端会返回 `TEXT`、`TOOL_RESULT`，在点红心成功时额外返回 `EFFECT`（`HEART`）。
 当工具触发网易云登录二维码时，额外返回 `QRCODE`；当工具触发播放时，额外返回 `AUDIO_URL`。
 当工具触发天气查询时，额外返回 `WEATHER_CARD`（含 3 天预报）。
+天气工具除了普通天气外，也支持“几点几分下雨”“未来一小时会不会下雨”“雨什么时候停”“要不要带伞”等分钟级降水问法。
 当服务端启用 TTS 时，还会推送 `AUDIO_CHUNK` + `AUDIO_END`。
 当识别到“换成/切换”类指令时，会推送 `MODEL_SWITCH`。
 当发送音频输入时，服务端会返回 `ASR_RESULT` 并继续走对话链路。
@@ -165,7 +167,7 @@ python main.py
 - `AUDIO_CHUNK` / `AUDIO_END`：分片音频接收与播放
 - `ASR_RESULT`：显示语音转写结果
 - `EFFECT`：目前支持 `HEART` 动效
-- `WEATHER_CARD`：展示 3 天天气卡片
+- `WEATHER_CARD`：展示 3 天天气卡片；语音文本同时可回答分钟级降水与停雨时间
 - `MODEL_SWITCH`：加载并切换 Live2D 模型
 - `TOOL_RESULT` / `ERROR`：写入日志面板
 
