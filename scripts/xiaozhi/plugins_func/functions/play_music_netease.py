@@ -745,26 +745,42 @@ async def _enqueue_music_opus_direct(
     log = conn.logger.bind(tag=TAG)
     try:
         max_wait = 120.0
-        # 已进入 phase2（会话已 start）后，若长期收不到 SessionFinished，最长再等这么多秒就强制下发
-        phase2_force_after = 8.0
+        phase2_force_after = 3.0
         slept = 0.0
         step = 0.15
-        # 文本队列里在插件 FIRST 之前常有框架的 FIRST/LAST，不能只看 activate_session，
-        # 否则会话 A 结束后就误判「已结束」，音乐会在口播前发出。
-        # 火山 FIRST 会把 conn.sentence_id 设为 DTO 里的 music_sid，以此为「本会话已开始」标志。
+
+        # ── 立即在后台启动 Opus 编码（与 TTS 口播并行） ──
+        opus_chunks: list[bytes] = []
+
+        def _on_opus_frame(frame_data):
+            if isinstance(frame_data, bytes) and frame_data:
+                opus_chunks.append(frame_data)
+
+        encode_task = asyncio.ensure_future(
+            asyncio.to_thread(
+                conn.tts.audio_to_opus_data_stream,
+                music_path,
+                _on_opus_frame,
+            )
+        )
+        t_encode_start = time.monotonic()
+
+        # ── Phase 状态机：等待 TTS 口播会话结束（与编码并行） ──
         phase = 0  # 0=等 sentence_id 切到 music_sid；1=等 activate True；2=等 activate False
-        t_phase1 = 0.0  # monotonic，进入 phase1 的时间
-        t_phase2 = 0.0  # monotonic，进入 phase2 的时间（用于强制兜底）
+        t_phase1 = 0.0
+        t_phase2 = 0.0
         while slept < max_wait:
-            # 用户点了新歌或新工具调用会递增 loop_generation，旧直连任务应退出
             if getattr(conn, "netease_loop_generation", -1) != loop_generation:
                 log.info("[直连音乐] 已有新的播放任务，取消本次直连等待")
+                encode_task.cancel()
                 return
             if conn.stop_event.is_set():
                 log.info("[直连音乐] 连接已停止，取消播放")
+                encode_task.cancel()
                 return
             if getattr(conn, "client_abort", False):
                 log.info("[直连音乐] 用户打断，取消播放")
+                encode_task.cancel()
                 return
             sid = getattr(conn, "sentence_id", None)
             active = getattr(conn.tts, "activate_session", False)
@@ -776,15 +792,13 @@ async def _enqueue_music_opus_direct(
                 if active:
                     phase = 2
                     t_phase2 = time.monotonic()
-                # sid 已匹配但长时间从未见到 active（轮询漏采样或会话极短）
-                elif t_phase1 and (time.monotonic() - t_phase1) > 2.5:
+                elif t_phase1 and (time.monotonic() - t_phase1) > 1.5:
                     log.info("[直连音乐] sid 已匹配但未采到激活态，按会话已结束处理并下发")
                     break
             if phase == 2:
                 if not active:
                     log.info("[直连音乐] 本会话已结束，开始编码 MP3 并下发")
                     break
-                # 火山侧偶发不将 activate_session 置 False，避免无声死等满 max_wait
                 if t_phase2 and (time.monotonic() - t_phase2) > phase2_force_after:
                     log.warning(
                         f"[直连音乐] phase2 已等待 {phase2_force_after:.0f}s 仍未结束会话，"
@@ -797,33 +811,26 @@ async def _enqueue_music_opus_direct(
             log.warning(
                 f"[直连音乐] 等待超时 phase={phase}，放弃下发（sid={getattr(conn,'sentence_id',None)!r}）"
             )
+            encode_task.cancel()
             return
 
-        # 给 TTS 音频线程一点时间把语音帧送完，避免与口播尾帧交错
         await asyncio.sleep(0.4)
 
         if conn.stop_event.is_set():
+            encode_task.cancel()
             return
-        # 长等待期间若曾触发过唤醒 abort，client_abort 可能一直为 True，会导致
-        # base._audio_play_priority_thread 丢弃整段音乐队列；下发前清除并打日志。
         if getattr(conn, "client_abort", False):
             log.warning("[直连音乐] 下发前清除 client_abort=True，避免音频线程跳过整首歌")
             conn.client_abort = False
 
-        opus_chunks: list[bytes] = []
+        # ── 等待后台编码完成（通常已在 TTS 等待期间完成） ──
+        try:
+            await encode_task
+        except asyncio.CancelledError:
+            return
+        encode_elapsed = time.monotonic() - t_encode_start
+        log.info(f"[直连音乐] Opus 编码耗时 {encode_elapsed:.1f}s（与 TTS 等待并行）")
 
-        def _on_opus_frame(frame_data):
-            # util.pcm_to_data_stream 按帧回调 bytes
-            if isinstance(frame_data, bytes) and frame_data:
-                opus_chunks.append(frame_data)
-
-        await asyncio.to_thread(
-            conn.tts.audio_to_opus_data_stream,
-            music_path,
-            _on_opus_frame,
-        )
-
-        # Opus 编码完成，临时 MP3 不再需要，立即清理避免磁盘泄漏
         if music_path and os.path.basename(music_path).startswith("netease_"):
             try:
                 os.remove(music_path)
