@@ -746,7 +746,7 @@ async def _enqueue_music_opus_direct(
     try:
         max_wait = 120.0
         # 已进入 phase2（会话已 start）后，若长期收不到 SessionFinished，最长再等这么多秒就强制下发
-        phase2_force_after = 35.0
+        phase2_force_after = 8.0
         slept = 0.0
         step = 0.15
         # 文本队列里在插件 FIRST 之前常有框架的 FIRST/LAST，不能只看 activate_session，

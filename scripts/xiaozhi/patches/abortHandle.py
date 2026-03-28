@@ -61,12 +61,18 @@ async def handleAbortMessage(conn: "ConnectionHandler", from_wake_word: bool = F
     )
     conn.clearSpeakStatus()
 
-    # 重置 TTS 引擎的会话激活标记，避免上一个被打断的 TTS 会话残留
-    # activate_session=True，导致下一次 _enqueue_music_opus_direct 进入 phase2
-    # 后误判"会话仍在进行"而空等 35s 超时才强制下发。
+    # 彻底关闭 TTS 引擎到火山的 WebSocket 连接。
+    # abort 后旧连接可能处于脏状态（会话未正常结束），若被下一次"使用已有链接"
+    # 复用，新 TTS 会话将无法生成语音，导致 _enqueue_music_opus_direct 在 phase2
+    # 空等超时后才强制下发音乐（用户感知为长时间卡在"聆听中"）。
+    # close() 会重置 activate_session、取消 monitor 任务、关闭 WS，
+    # 下一次 TTS 调用将经 _ensure_connection 建立全新连接。
     tts = getattr(conn, "tts", None)
-    if tts is not None and getattr(tts, "activate_session", False):
-        tts.activate_session = False
-        conn.logger.bind(tag=TAG).debug("已重置 tts.activate_session，防止残留阻塞下一次播放")
+    if tts is not None:
+        try:
+            await tts.close()
+            conn.logger.bind(tag=TAG).info("已关闭 TTS 引擎连接，下次将建立新连接")
+        except Exception as e:
+            conn.logger.bind(tag=TAG).warning(f"关闭 TTS 引擎连接时异常: {e}")
 
     conn.logger.bind(tag=TAG).info("Abort message received-end")
