@@ -60,4 +60,13 @@ async def handleAbortMessage(conn: "ConnectionHandler", from_wake_word: bool = F
         json.dumps({"type": "tts", "state": "stop", "session_id": conn.session_id})
     )
     conn.clearSpeakStatus()
+
+    # 重置 TTS 引擎的会话激活标记，避免上一个被打断的 TTS 会话残留
+    # activate_session=True，导致下一次 _enqueue_music_opus_direct 进入 phase2
+    # 后误判"会话仍在进行"而空等 35s 超时才强制下发。
+    tts = getattr(conn, "tts", None)
+    if tts is not None and getattr(tts, "activate_session", False):
+        tts.activate_session = False
+        conn.logger.bind(tag=TAG).debug("已重置 tts.activate_session，防止残留阻塞下一次播放")
+
     conn.logger.bind(tag=TAG).info("Abort message received-end")
