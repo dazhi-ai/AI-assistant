@@ -5,6 +5,7 @@ from plugins_func.register import register_function, ToolType, ActionResponse, A
 from core.utils.util import get_ip_info
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
+import re
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
@@ -18,9 +19,11 @@ GET_WEATHER_FUNCTION_DESC = {
         "name": "get_weather",
         "description": (
             "获取某个地点的天气、未来7天天气概况，以及未来24小时内可能下雨的大致时间。"
-            "如果用户问今天会不会下雨、几点下雨、晚上会不会下雨，也调用这个函数。"
+            "如果用户问今天会不会下雨、几点下雨、晚上会不会下雨、明早会不会下雨、"
+            "下午三点到六点会不会下雨，也调用这个函数。"
             "用户应提供一个位置，比如用户说杭州天气，参数为：杭州。"
             "如果用户没有指明地点，说“天气怎么样”“今天天气如何”，location 参数为空。"
+            "如果用户问的是具体时间段，请把原始时间诉求放进 time_query。"
         ),
         "parameters": {
             "type": "object",
@@ -32,6 +35,10 @@ GET_WEATHER_FUNCTION_DESC = {
                 "lang": {
                     "type": "string",
                     "description": "返回用户使用的语言 code，例如 zh_CN/zh_HK/en_US/ja_JP 等，默认 zh_CN",
+                },
+                "time_query": {
+                    "type": "string",
+                    "description": "用户关注的具体时间描述，例如 今晚、明早、下午三点到六点、明天早上八点。",
                 },
             },
             "required": ["lang"],
@@ -293,8 +300,137 @@ def _build_hourly_brief(hourly_list: list[dict]) -> str:
     return "未来几小时：\n" + "\n".join(f"  · {line}" for line in useful)
 
 
+def _get_hour_and_date(item: dict):
+    fx_time = str(item.get("fxTime", "") or "")
+    date_part = fx_time[:10]
+    hour_text = fx_time[11:13] if len(fx_time) >= 13 else ""
+    try:
+        hour_value = int(hour_text)
+    except ValueError:
+        hour_value = -1
+    return date_part, hour_value
+
+
+def _filter_time_window(hourly_list: list[dict], target_date: str | None, start_hour: int, end_hour: int):
+    result = []
+    for item in hourly_list:
+        item_date, item_hour = _get_hour_and_date(item)
+        if item_hour < 0:
+            continue
+        if target_date and item_date != target_date:
+            continue
+        if start_hour <= item_hour <= end_hour:
+            result.append(item)
+    return result
+
+
+def _format_hour_only(item: dict) -> str:
+    fx_time = str(item.get("fxTime", "") or "")
+    return fx_time[11:16] if len(fx_time) >= 16 else _format_hour_label(fx_time)
+
+
+def _analyze_target_window(hourly_list: list[dict], time_query: str) -> str:
+    if not hourly_list or not time_query:
+        return ""
+
+    query = str(time_query).strip()
+    if not query:
+        return ""
+
+    first_date = hourly_list[0].get("fxTime", "")[:10] if hourly_list else ""
+    second_date = ""
+    for item in hourly_list:
+        item_date, _ = _get_hour_and_date(item)
+        if item_date and item_date != first_date:
+            second_date = item_date
+            break
+
+    target_date = first_date
+    if "明" in query and second_date:
+        target_date = second_date
+
+    windows = [
+        ("今晚", 18, 23),
+        ("今天晚上", 18, 23),
+        ("今夜", 18, 23),
+        ("明晚", 18, 23),
+        ("明天晚上", 18, 23),
+        ("明早", 5, 11),
+        ("明晨", 5, 11),
+        ("明天早上", 5, 11),
+        ("明天上午", 6, 11),
+        ("今天早上", 5, 11),
+        ("早上", 5, 11),
+        ("上午", 6, 11),
+        ("中午", 11, 13),
+        ("下午", 12, 17),
+        ("傍晚", 17, 19),
+        ("晚上", 18, 23),
+        ("凌晨", 0, 5),
+    ]
+
+    match = re.search(r"(\d{1,2})\s*点\s*(?:到|至|\-|~)\s*(\d{1,2})\s*点", query)
+    if match:
+        start_hour = int(match.group(1))
+        end_hour = int(match.group(2))
+        if end_hour < start_hour:
+            end_hour = start_hour
+        focus_hours = _filter_time_window(hourly_list, target_date, start_hour, end_hour)
+        label = f"{query}这段时间"
+    else:
+        single_match = re.search(r"(\d{1,2})\s*点", query)
+        focus_hours = []
+        label = query
+        if single_match:
+            hour_value = int(single_match.group(1))
+            focus_hours = _filter_time_window(hourly_list, target_date, hour_value, hour_value)
+            label = f"{hour_value}点左右"
+        else:
+            for text, start_hour, end_hour in windows:
+                if text in query:
+                    if text.startswith("明") and second_date:
+                        target_date = second_date
+                    focus_hours = _filter_time_window(hourly_list, target_date, start_hour, end_hour)
+                    label = text
+                    break
+
+    if not focus_hours:
+        return ""
+
+    rainy_hours = [item for item in focus_hours if _is_rainy_hour(item)]
+    if rainy_hours:
+        rain_labels = [_format_hour_only(item) for item in rainy_hours[:5]]
+        rain_desc = "、".join(rain_labels)
+        first_text = rainy_hours[0].get("text", "有雨")
+        return f"关于“{query}”：{label}有下雨可能，重点时段在 {rain_desc}，天气以{first_text}为主。"
+
+    max_pop = -1
+    max_item = None
+    for item in focus_hours:
+        pop_text = str(item.get("pop", "") or "0").strip()
+        try:
+            pop_value = int(float(pop_text))
+        except ValueError:
+            pop_value = 0
+        if pop_value > max_pop:
+            max_pop = pop_value
+            max_item = item
+
+    if max_item is not None:
+        return (
+            f"关于“{query}”：{label}暂无明显降雨，"
+            f"最高降水概率大约在 {_format_hour_only(max_item)}，约 {max_pop}% 。"
+        )
+    return f"关于“{query}”：{label}暂无明显降雨。"
+
+
 @register_function("get_weather", GET_WEATHER_FUNCTION_DESC, ToolType.SYSTEM_CTL)
-def get_weather(conn: "ConnectionHandler", location: str = None, lang: str = "zh_CN"):
+def get_weather(
+    conn: "ConnectionHandler",
+    location: str = None,
+    lang: str = "zh_CN",
+    time_query: str = "",
+):
     from core.utils.cache.manager import cache_manager, CacheType
 
     weather_config = conn.config.get("plugins", {}).get("get_weather", {})
@@ -325,7 +461,7 @@ def get_weather(conn: "ConnectionHandler", location: str = None, lang: str = "zh
         else:
             location = default_location
 
-    weather_cache_key = f"full_weather_{location}_{lang}"
+    weather_cache_key = f"full_weather_{location}_{lang}_{time_query}"
     cached_weather_report = cache_manager.get(CacheType.WEATHER, weather_cache_key)
     if cached_weather_report:
         return ActionResponse(Action.REQLLM, cached_weather_report, None)
@@ -360,11 +496,16 @@ def get_weather(conn: "ConnectionHandler", location: str = None, lang: str = "zh
     weather_report += "\n未来24小时降雨提示：\n"
     weather_report += _build_rain_summary(hourly_list) + "\n"
 
+    target_summary = _analyze_target_window(hourly_list, time_query)
+    if target_summary:
+        weather_report += "\n重点时段判断：\n"
+        weather_report += target_summary + "\n"
+
     hourly_brief = _build_hourly_brief(hourly_list)
     if hourly_brief:
         weather_report += "\n" + hourly_brief + "\n"
 
-    weather_report += "\n（如需更具体的下雨时间，可以直接问我：今天几点下雨、今晚会不会下雨。）"
+    weather_report += "\n（如需更具体的下雨时间，可以直接问我：今晚会不会下雨、明早会不会下雨、下午三点到六点会不会下雨。）"
 
     cache_manager.set(CacheType.WEATHER, weather_cache_key, weather_report)
     return ActionResponse(Action.REQLLM, weather_report, None)
