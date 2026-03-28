@@ -36,10 +36,12 @@
   var mediaElementSource = null;
 
   var mediaSource = null;
+  var mediaSourceUrl = null;
   var sourceBuffer = null;
   var sourceQueue = [];
   var useMse = false;
   var fallbackChunks = [];
+  var userRequestedDisconnect = false;
 
   var MODEL_URLS = {
     default: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/haru/haru.model3.json",
@@ -277,11 +279,16 @@
     sourceQueue = [];
     fallbackChunks = [];
     sourceBuffer = null;
+    if (mediaSourceUrl) {
+      window.URL.revokeObjectURL(mediaSourceUrl);
+      mediaSourceUrl = null;
+    }
     if (!window.MediaSource || !window.MediaSource.isTypeSupported("audio/mpeg")) {
       return;
     }
     mediaSource = new window.MediaSource();
-    audioPlayer.src = window.URL.createObjectURL(mediaSource);
+    mediaSourceUrl = window.URL.createObjectURL(mediaSource);
+    audioPlayer.src = mediaSourceUrl;
     mediaSource.addEventListener("sourceopen", function () {
       try {
         sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
@@ -341,7 +348,11 @@
       return;
     }
     var blob = new Blob(fallbackChunks, { type: "audio/mpeg" });
-    audioPlayer.src = window.URL.createObjectURL(blob);
+    var blobUrl = window.URL.createObjectURL(blob);
+    if (audioPlayer.src && audioPlayer.src.indexOf("blob:") === 0) {
+      window.URL.revokeObjectURL(audioPlayer.src);
+    }
+    audioPlayer.src = blobUrl;
     fallbackChunks = [];
     playAudio();
   }
@@ -442,6 +453,10 @@
         clearInterval(pingTimer);
         pingTimer = null;
       }
+      if (userRequestedDisconnect) {
+        userRequestedDisconnect = false;
+        return;
+      }
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
       }
@@ -454,6 +469,7 @@
   }
 
   function disconnect() {
+    userRequestedDisconnect = true;
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
     }

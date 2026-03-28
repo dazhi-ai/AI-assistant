@@ -19,6 +19,7 @@ play_music 插件 - 网易云音乐版本
 """
 
 import os
+import asyncio
 import time
 import uuid
 import random
@@ -36,6 +37,91 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 
 TAG = __name__
+
+
+def schedule_netease_resume_prompt(conn: "ConnectionHandler") -> None:
+    """用户在下一句非唤醒语音后，待助理播报结束再询问是否继续单曲循环。"""
+    loop = getattr(conn, "loop", None)
+    if loop is None or not loop.is_running():
+        return
+    old = getattr(conn, "netease_resume_prompt_task", None)
+    if old is not None and not old.done():
+        old.cancel()
+    try:
+        conn.netease_resume_prompt_task = loop.create_task(
+            _netease_resume_prompt_worker(conn)
+        )
+    except Exception:
+        pass
+
+
+async def _netease_resume_prompt_worker(conn: "ConnectionHandler") -> None:
+    log = conn.logger.bind(tag=TAG)
+    try:
+        if getattr(conn, "netease_resume_prompt_state", None) != "waiting_assistant_done":
+            return
+        deadline = time.monotonic() + 180.0
+        stable = 0
+        while time.monotonic() < deadline:
+            if getattr(conn, "netease_resume_prompt_state", None) != "waiting_assistant_done":
+                log.info("[单曲循环恢复提示] 状态已变更，取消")
+                return
+            if not getattr(conn, "client_is_speaking", False):
+                stable += 1
+                if stable >= 2:
+                    await asyncio.sleep(0.35)
+                    if not getattr(conn, "client_is_speaking", False):
+                        break
+                else:
+                    await asyncio.sleep(0.2)
+            else:
+                stable = 0
+                await asyncio.sleep(0.2)
+        else:
+            log.warning("[单曲循环恢复提示] 等待助理播报结束超时，不再询问")
+            conn.netease_resume_prompt_state = None
+            return
+
+        if getattr(conn, "netease_resume_prompt_state", None) != "waiting_assistant_done":
+            return
+        conn.netease_resume_prompt_state = None
+        snap = getattr(conn, "netease_resume_snapshot", None) or {}
+        title = snap.get("title") or "刚才的歌曲"
+        prompt = (
+            f"刚才的《{title}》单曲循环已暂停。"
+            f"需要继续单曲循环吗？说「继续播放」或「接着放」即可；不需要就接着说别的。"
+        )
+        log.info("[单曲循环恢复提示] 播报询问语")
+        sid = uuid.uuid4().hex
+        conn.sentence_id = sid
+        conn.tts.tts_text_queue.put(
+            TTSMessageDTO(
+                sentence_id=sid,
+                sentence_type=SentenceType.FIRST,
+                content_type=ContentType.ACTION,
+            )
+        )
+        conn.tts.tts_text_queue.put(
+            TTSMessageDTO(
+                sentence_id=sid,
+                sentence_type=SentenceType.MIDDLE,
+                content_type=ContentType.TEXT,
+                content_detail=prompt,
+            )
+        )
+        conn.tts.tts_text_queue.put(
+            TTSMessageDTO(
+                sentence_id=sid,
+                sentence_type=SentenceType.LAST,
+                content_type=ContentType.ACTION,
+            )
+        )
+    except asyncio.CancelledError:
+        log.info("[单曲循环恢复提示] 已取消")
+        raise
+    except Exception as exc:
+        log.error(f"[单曲循环恢复提示] 异常：{exc}")
+
 
 # 网易云直连音乐写入播放队列后，在 abortHandle 中忽略设备 abort 的时长（秒）。
 # 用于降低唤醒词误触导致「歌刚开就断」；需与 core/handle/abortHandle.py 补丁配合部署。
@@ -538,7 +624,14 @@ def _pick_song_from_playlist(songs: list, index: int) -> dict | None:
 def _download_audio(audio_url: str, dest_path: str, timeout: int = 30) -> bool:
     """将网易云音频 URL 下载到临时文件，成功返回 True。"""
     try:
-        urllib.request.urlretrieve(audio_url, dest_path)
+        req = urllib.request.Request(audio_url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with open(dest_path, "wb") as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
         return os.path.exists(dest_path) and os.path.getsize(dest_path) > 0
     except Exception:
         return False
@@ -649,9 +742,6 @@ async def _enqueue_music_opus_direct(
     或 finish_session 异常），导致「口播正常、音乐永远不下发」。故 phase2 增加「强制超时」
     兜底，在口播任务已走远后仍强制编码下发。
     """
-    import asyncio
-    import time
-
     log = conn.logger.bind(tag=TAG)
     try:
         max_wait = 120.0
@@ -733,6 +823,14 @@ async def _enqueue_music_opus_direct(
             _on_opus_frame,
         )
 
+        # Opus 编码完成，临时 MP3 不再需要，立即清理避免磁盘泄漏
+        if music_path and os.path.basename(music_path).startswith("netease_"):
+            try:
+                os.remove(music_path)
+                log.info(f"[直连音乐] 已清理临时文件：{music_path}")
+            except OSError:
+                pass
+
         if not opus_chunks:
             log.error(f"[直连音乐] Opus 编码结果为空，文件={music_path}")
             return
@@ -767,6 +865,12 @@ async def _enqueue_music_opus_direct(
             else:
                 shield_sec = NETEASE_MUSIC_ANTI_INTERRUPT_SEC
             conn.netease_music_shield_until = time.monotonic() + shield_sec
+            if single_loop:
+                conn.netease_resume_snapshot = {
+                    "single_loop": True,
+                    "music_path": music_path,
+                    "title": title,
+                }
             if loop_round == 0:
                 log.info(
                     f"[直连音乐] 下发设备：{title}，Opus帧数={len(opus_chunks)}，文件={music_path}"
@@ -838,12 +942,12 @@ async def _handle_netease_play(
       ⑥ LAST(ACTION) 结束 TTS 会话；MP3 改由 _enqueue_music_opus_direct 在会话结束后直送
          tts_audio_queue（绕过 SessionFinished 才能触发的 FILE 管道，解决「待播放列表有、设备无声」）
     """
-    import asyncio
 
     # 每次新播放递增代数，用于取消仍在等待/单曲循环中的旧直连任务
     _prev_gen = int(getattr(conn, "netease_loop_generation", 0))
     conn.netease_loop_generation = _prev_gen + 1
     loop_generation = conn.netease_loop_generation
+    conn.netease_resume_prompt_armed = False
 
     # ① 独立会话 id：只放在 DTO 里，由火山 TTS 线程在收到 FIRST 时写入 conn.sentence_id
     music_sid = uuid.uuid4().hex

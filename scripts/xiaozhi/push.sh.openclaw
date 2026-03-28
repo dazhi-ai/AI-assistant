@@ -17,6 +17,7 @@ set -euo pipefail
 source /opt/xiaozhi-push/push.env
 
 MERGED="/tmp/xiaozhi_full_prompt_$$.txt"
+trap 'rm -f "$MERGED"' EXIT
 python3 /opt/xiaozhi-push/merge_system_prompt_for_daily_news.py > "$MERGED"
 export PROMPT_FILE="$MERGED"
 python3 /opt/xiaozhi-push/update_agent_prompt_mysql_via_ssh.py
@@ -55,5 +56,4 @@ if [[ "$SYNC_LOCAL" == "1" || "$SYNC_LOCAL" == "true" || "$SYNC_LOCAL" == "yes" 
   fi
 fi
 
-rm -f "$MERGED"
 echo "[push.sh] done"

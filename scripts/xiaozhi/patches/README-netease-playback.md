@@ -12,19 +12,35 @@
 
 **注意**：单曲循环时，防打断窗口会按 **本首估算播放时长 + 缓冲** 拉长（而不仅是 15 秒），否则长歌播到十几秒时设备仍可能发 `abort`，服务端清空队列后 `client_abort` 会令循环任务误判退出。
 
-## 播歌后前 15 秒忽略设备 abort（降误触）
+## 播歌防打断与「唤醒词优先」（单曲循环可打断）
 
-插件在直连音乐**全部写入** `tts_audio_queue` 后，会设置 `conn.netease_music_shield_until`（约 15 秒）。  
-必须将本目录下的 **`abortHandle.py`** 覆盖到服务端的 `core/handle/abortHandle.py`，否则仅插件无效。
+插件在直连音乐**全部写入** `tts_audio_queue` 后，会设置 `conn.netease_music_shield_until`（普通播放约 **15 秒**；单曲循环为**整首估算时长 + 缓冲**）。
 
-窗口内收到 `abort`（含 `wake_word_detected`）时：**不**执行 `client_abort` / `clear_queues` / `tts stop`，并打日志  
-`播歌防打断窗口内，忽略本次 abort`。
+在防打断窗口内：
 
-部署示例：
+- **VAD 触发的 abort**（`receiveAudioHandle.handleAudioMessage`）：仍**忽略**，避免误触断播。  
+- **明确唤醒词**（`listen` → `detect` 且文案命中 `wakeup_words`，经 `startToChat(..., from_wake_word=True)`）：**解除窗口、取消单曲循环后台任务**，并正常 `clear_queues` / `tts stop`；用户**下一句非唤醒语音**在助理播报结束后，会**多播一句**询问是否继续单曲循环（说「继续播放」等可由大模型再调 `play_music`）。
+
+须同时部署本目录下：
+
+| 文件 | 容器内路径 |
+|------|------------|
+| `abortHandle.py` | `core/handle/abortHandle.py` |
+| `receiveAudioHandle.py` | `core/handle/receiveAudioHandle.py` |
+| `listenMessageHandler.py` | `core/handle/textHandler/listenMessageHandler.py` |
+| `../plugins_func/functions/play_music_netease.py` | `plugins_func/functions/play_music.py`（或你实际挂载的 play_music 文件名） |
+
+部署示例（路径按你环境调整）：
 
 ```bash
-scp -P 1258 patches/abortHandle.py root@HOST:/tmp/abortHandle.py
-ssh -p 1258 root@HOST "docker cp /tmp/abortHandle.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/abortHandle.py && docker restart xiaozhi-esp32-server"
+scp -P 1258 abortHandle.py receiveAudioHandle.py listenMessageHandler.py root@HOST:/tmp/
+scp -P 1258 ../plugins_func/functions/play_music_netease.py root@HOST:/tmp/play_music.py
+ssh -p 1258 root@HOST "docker cp /tmp/abortHandle.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/abortHandle.py && \
+  docker cp /tmp/receiveAudioHandle.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/receiveAudioHandle.py && \
+  docker cp /tmp/listenMessageHandler.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/textHandler/listenMessageHandler.py && \
+  docker cp /tmp/play_music.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/plugins_func/functions/play_music.py && \
+  docker exec xiaozhi-esp32-server find /opt/xiaozhi-esp32-server -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; \
+  docker restart xiaozhi-esp32-server"
 ```
 
 ## 若「口播正常、音乐仍无声」
@@ -43,8 +59,7 @@ ssh -p 1258 root@HOST "docker cp /tmp/abortHandle.py xiaozhi-esp32-server:/opt/x
 
 ## 若日志出现 `[直连音乐] 用户打断，取消播放`
 
-设备在播放前触发了 **abort**（常说唤醒词「你好小智」会 `wake_word_detected`）。  
-直连任务会放弃编码/下发。请试：**播歌后约 30 秒内不要说唤醒词**。
+防打断窗口**之外**的 **abort** 仍会结束单曲循环任务。若已部署「唤醒词优先」补丁，在窗口内说**唤醒词**会主动取消循环并清空队列，而**非唤醒的 VAD abort** 在窗口内仍被忽略。
 
 ## 不要改 `base._process_before_stop_play_files` 空列表仍发 LAST
 
