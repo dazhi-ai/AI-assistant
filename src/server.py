@@ -23,6 +23,9 @@ from src.tts_service import TTSService
 
 logger = logging.getLogger(__name__)
 
+# 全局平板 WebSocket 连接集合（asyncio 单线程内操作，无需锁）
+_tablet_websockets: set = set()
+
 
 async def _send_message(websocket: ServerConnection, message_type: str, payload: dict, trace_id: str | None = None) -> None:
     """Send one protocol message to the client."""
@@ -172,8 +175,13 @@ async def handle_client(
     logger.info("Client connected")
     session_id = str(id(websocket))
     authed = settings.ws_token == ""
+    is_mirror_source = False  # True 表示此连接来自 xiaozhi-esp32-server 桥接
     audio_input_chunk_count = 0
     audio_input_bytes = bytearray()
+
+    # 默认注册为平板连接，MIRROR_INIT 后会移出
+    _tablet_websockets.add(websocket)
+
     try:
         async for raw_message in websocket:
             logger.info("RAW MSG RECEIVED: %s", raw_message[:120] if isinstance(raw_message, str) else f"<binary {len(raw_message)}B>")
@@ -193,6 +201,38 @@ async def handle_client(
                     continue
                 authed = True
                 await _send_message(websocket, "AUTH_OK", {"message": "Authenticated."}, trace_id=message.trace_id)
+                continue
+
+            # 小智桥接握手：无需通过普通 AUTH，使用独立 mirror_token
+            if message.type == "MIRROR_INIT":
+                token = str(message.payload.get("token", ""))
+                if settings.mirror_token and token == settings.mirror_token:
+                    is_mirror_source = True
+                    _tablet_websockets.discard(websocket)  # 桥接源不列为平板
+                    logger.info("Mirror source connected (xiaozhi bridge)")
+                    await _send_message(websocket, "MIRROR_OK", {"ok": True}, trace_id=message.trace_id)
+                else:
+                    await _send_message(websocket, "ERROR", {"code": "MIRROR_AUTH_FAILED", "message": "Invalid mirror_token."}, trace_id=message.trace_id)
+                continue
+
+            # 小智 AI 文字回复推送：广播给所有平板连接并生成 TTS
+            if message.type == "XIAOZHI_TEXT" and is_mirror_source:
+                ai_text = str(message.payload.get("ai_text", "")).strip()
+                if ai_text and _tablet_websockets:
+                    dead: set = set()
+                    for ws in list(_tablet_websockets):
+                        try:
+                            await _send_message(ws, "TEXT", {"text": ai_text}, trace_id=message.trace_id)
+                            await _stream_tts_to_client(
+                                websocket=ws,
+                                tts_service=tts_service,
+                                text=ai_text,
+                                trace_id=message.trace_id,
+                            )
+                        except Exception:  # noqa: BLE001
+                            dead.add(ws)
+                    _tablet_websockets -= dead
+                    logger.info("Mirrored xiaozhi text to %d tablet(s): %s", len(_tablet_websockets), ai_text[:40])
                 continue
 
             if not authed:
@@ -324,7 +364,9 @@ async def handle_client(
     except websockets.ConnectionClosed:
         logger.info("Client disconnected")
     finally:
-        assistant.clear_session(session_id)
+        _tablet_websockets.discard(websocket)
+        if not is_mirror_source:
+            assistant.clear_session(session_id)
 
 
 async def start_server(settings: Settings) -> None:

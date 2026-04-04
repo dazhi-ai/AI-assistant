@@ -62,6 +62,8 @@ class Settings:
     knowledge_ingest_token: str
     knowledge_data_path: str
     knowledge_context_max_chars: int
+    # 小智镜像桥接：xiaozhi-esp32-server 用此 token 以 MIRROR_INIT 连入，将 AI 回复推送给平板
+    mirror_token: str
 
 
 def _to_bool(value: str) -> bool:
@@ -132,6 +134,7 @@ def load_settings() -> Settings:
     knowledge_ingest_token = os.getenv("KNOWLEDGE_INGEST_TOKEN", "").strip()
     knowledge_data_path = os.getenv("KNOWLEDGE_DATA_PATH", "data/knowledge_base.jsonl").strip()
     knowledge_context_max_chars = int(os.getenv("KNOWLEDGE_CONTEXT_MAX_CHARS", "6000"))
+    mirror_token = os.getenv("MIRROR_TOKEN", "").strip()
     return Settings(
         host=host,
         port=port,
@@ -184,6 +187,7 @@ def load_settings() -> Settings:
         knowledge_ingest_token=knowledge_ingest_token,
         knowledge_data_path=knowledge_data_path,
         knowledge_context_max_chars=knowledge_context_max_chars,
+        mirror_token=mirror_token,
     )
 
 
