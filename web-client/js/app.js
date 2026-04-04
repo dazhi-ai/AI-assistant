@@ -491,6 +491,13 @@
     if (t === "AUTH_OK") {
       appendLog("INFO", "认证成功");
       addMessage("system", "✓ 认证成功，可以开始对话");
+      // 认证后延迟 2s 自动静默查询天气，让天气卡片自动出现
+      setTimeout(function () {
+        if (socket && socket.readyState === 1) {
+          appendLog("INFO", "自动查询天气...");
+          safeSend("TEXT", { text: "今天天气怎么样" });
+        }
+      }, 2000);
       return;
     }
     if (t === "AUTH_FAILED") {
@@ -559,6 +566,15 @@
         safeSend("AUTH", { token: tokenInput.value }, traceId("auth"));
         // 保存 Token 到 localStorage，下次自动填充
         try { localStorage.setItem("ws_token", tokenInput.value); } catch (e) {}
+        // 有 Token 时等 AUTH_OK 再查天气（在 AUTH_OK 处理中触发）
+      } else {
+        // 无 Token（服务器无鉴权要求），直接延迟查天气
+        setTimeout(function () {
+          if (socket && socket.readyState === 1) {
+            appendLog("INFO", "自动查询天气（无鉴权）...");
+            safeSend("TEXT", { text: "今天天气怎么样" });
+          }
+        }, 2000);
       }
       if (pingTimer) { clearInterval(pingTimer); }
       pingTimer = setInterval(function () {
@@ -761,7 +777,7 @@
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260405b",
+    "JS版本: v20260405c",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
