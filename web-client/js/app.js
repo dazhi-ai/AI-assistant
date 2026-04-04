@@ -201,18 +201,8 @@
   function startVoiceRecord() {
     if (isRecording) { return; } // 防止重复触发
 
-    // 优先 getUserMedia（Android 4.4 / Chrome 21+ 支持，HTTP 下也可用）
-    var gum = navigator.getUserMedia      ||
-              navigator.webkitGetUserMedia ||
-              navigator.mozGetUserMedia    || null;
-
-    if (!gum) {
-      addMessage("system", "当前浏览器不支持录音，请尝试 Chrome 浏览器");
-      appendLog("WARN", "getUserMedia 不可用");
-      return;
-    }
-
-    gum.call(navigator, { audio: true, video: false }, function (stream) {
+    // 麦克风流就绪后的处理：创建 AudioContext，开始 PCM 采集
+    function onStream(stream) {
       voiceMediaStream = stream;
       var Ctx = window.AudioContext || window.webkitAudioContext;
       voiceAudioCtx = new Ctx();
@@ -236,10 +226,34 @@
 
       if (voiceBtn) { voiceBtn.className = "btn-voice recording"; }
       appendLog("INFO", "录音中... 采样率: " + voiceSampleRate);
-    }, function (err) {
-      appendLog("WARN", "麦克风权限被拒绝: " + String(err));
-      addMessage("system", "无法访问麦克风，请检查浏览器权限设置");
-    });
+    }
+
+    // 麦克风权限被拒绝或出错时的处理
+    function onError(err) {
+      appendLog("WARN", "麦克风错误: " + String(err));
+      addMessage("system", "无法访问麦克风，请在浏览器地址栏允许麦克风权限后重试");
+    }
+
+    // 优先使用现代 Promise API（Chrome 47+、小米/华为/OPPO 等内置浏览器）
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        .then(onStream)
+        .catch(onError);
+      return;
+    }
+
+    // 回退到旧版前缀 API（Android 4.4 / Chrome 21–46）
+    var gum = navigator.getUserMedia      ||
+              navigator.webkitGetUserMedia ||
+              navigator.mozGetUserMedia    || null;
+
+    if (!gum) {
+      addMessage("system", "当前浏览器不支持麦克风录音，建议改用 Chrome 浏览器");
+      appendLog("WARN", "getUserMedia / mediaDevices 均不可用");
+      return;
+    }
+
+    gum.call(navigator, { audio: true, video: false }, onStream, onError);
   }
 
   function stopVoiceRecord() {
