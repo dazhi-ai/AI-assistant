@@ -318,14 +318,23 @@ async def handle_client(
                     trace_id=message.trace_id,
                 )
                 if user_text_from_audio:
-                    await _handle_user_text(
-                        websocket=websocket,
-                        assistant=assistant,
-                        tts_service=tts_service,
-                        session_id=session_id,
-                        user_text=user_text_from_audio,
-                        trace_id=message.trace_id,
-                    )
+                    try:
+                        await _handle_user_text(
+                            websocket=websocket,
+                            assistant=assistant,
+                            tts_service=tts_service,
+                            session_id=session_id,
+                            user_text=user_text_from_audio,
+                            trace_id=message.trace_id,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("Error handling AUDIO_INPUT text: %s", exc)
+                        await _send_message(
+                            websocket,
+                            "ERROR",
+                            {"code": "INTERNAL_ERROR", "message": "语音处理时发生内部错误，请重试。"},
+                            trace_id=message.trace_id,
+                        )
                 else:
                     await _send_message(
                         websocket,
@@ -347,14 +356,23 @@ async def handle_client(
                         trace_id=message.trace_id,
                     )
                     continue
-                await _handle_user_text(
-                    websocket=websocket,
-                    assistant=assistant,
-                    tts_service=tts_service,
-                    session_id=session_id,
-                    user_text=user_text,
-                    trace_id=message.trace_id,
-                )
+                try:
+                    await _handle_user_text(
+                        websocket=websocket,
+                        assistant=assistant,
+                        tts_service=tts_service,
+                        session_id=session_id,
+                        user_text=user_text,
+                        trace_id=message.trace_id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Error handling TEXT message: %s", exc)
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "INTERNAL_ERROR", "message": "处理消息时发生内部错误，请重试。"},
+                        trace_id=message.trace_id,
+                    )
                 continue
 
             await _send_message(

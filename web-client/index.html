@@ -9,7 +9,7 @@
   </head>
   <body>
 
-    <!-- 顶部导航栏 -->
+    <!-- ===== 顶部导航栏（fixed） ===== -->
     <header class="top-bar">
       <div class="bar-left">
         <span class="app-name">AI 助手</span>
@@ -21,41 +21,46 @@
       </div>
     </header>
 
-    <!-- 主体滚动区 -->
+    <!-- ===== 主体内容区（fixed，撑满 header 与 bottom-bar 之间） ===== -->
     <div class="app-body">
 
-      <!-- Live2D 人物嵌入区 -->
-      <div id="live2dContainer" class="live2d-embed">
-        <div id="modelText" class="model-label">模型加载中...</div>
+      <!-- Live2D 嵌入区 + 天气卡片 Overlay -->
+      <div class="live2d-section">
+        <div id="live2dContainer" class="live2d-embed">
+
+          <!-- 天气 overlay：叠在 Live2D 左上角，有数据时显示 -->
+          <div id="weatherOverlay" class="weather-overlay hidden">
+            <div id="weatherCity" class="weather-city-name"></div>
+            <div id="weatherDays" class="weather-days-list"></div>
+          </div>
+
+          <div id="modelText" class="model-label">模型加载中...</div>
+        </div>
+
+        <!-- 口型能量条 -->
+        <div class="mouth-track">
+          <div id="mouthBarInner" class="mouth-bar-fill"></div>
+        </div>
       </div>
 
-      <!-- 口型能量条 -->
-      <div class="mouth-track">
-        <div id="mouthBarInner" class="mouth-bar-fill"></div>
-      </div>
-
-      <!-- AI 回复气泡 -->
-      <div class="reply-bubble">
-        <div class="reply-icon">AI</div>
-        <div id="aiReplyText" class="reply-text">连接后向 AI 发送消息。</div>
-      </div>
-
-      <!-- 天气卡片（有数据时显示） -->
-      <div id="weatherSection" class="weather-section hidden">
-        <div id="weatherText" class="weather-title"></div>
-        <div id="weatherCards" class="weather-cards"></div>
+      <!-- 聊天历史区（可滚动，WeChat 风格） -->
+      <div class="chat-area-wrap">
+        <div class="chat-toolbar">
+          <button id="clearChatBtn" class="clear-chat-btn" type="button">清除记录</button>
+        </div>
+        <div id="chatHistory" class="chat-history"></div>
       </div>
 
     </div>
 
-    <!-- 底部固定输入栏 -->
+    <!-- ===== 底部固定输入栏 ===== -->
     <div class="bottom-bar">
       <button id="voiceBtn" class="btn-voice" type="button" title="语音输入">&#127908;</button>
       <input id="textInput" class="chat-input" type="text" placeholder="向 AI 说点什么..." />
       <button id="sendTextBtn" class="send-btn" type="button">发送</button>
     </div>
 
-    <!-- 设置全屏面板 -->
+    <!-- ===== 设置全屏面板 ===== -->
     <div id="settingsPanel" class="settings-panel hidden">
       <div class="settings-header">
         <span class="settings-title">设置</span>
@@ -89,7 +94,7 @@
       </div>
     </div>
 
-    <!-- 隐藏的功能性元素（JS 依赖，不展示） -->
+    <!-- 隐藏的功能性元素（JS 依赖，不显示） -->
     <div class="hidden">
       <audio id="audioPlayer" preload="none"></audio>
       <div id="audioText"></div>
@@ -101,11 +106,11 @@
       <button id="sendAudioBtn" type="button"></button>
     </div>
 
-    <div id="heartEffect" class="heart-effect hidden">❤</div>
+    <div id="heartEffect" class="heart-effect hidden">&#10084;</div>
 
     <!-- live2d-widget 本地文件，无 CDN 依赖 -->
     <script src="./js/L2Dwidget.min.js"
             onerror="document.getElementById('logBox').textContent+='[ERR] L2Dwidget.min.js 加载失败\n'"></script>
-    <script src="./js/app.js?v=20260404p"></script>
+    <script src="./js/app.js?v=20260405a"></script>
   </body>
 </html>
