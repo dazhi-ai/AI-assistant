@@ -487,6 +487,24 @@
     var t = String(data.type || "").toUpperCase();
     var payload = data.payload || {};
 
+    // 认证响应
+    if (t === "AUTH_OK") {
+      appendLog("INFO", "认证成功");
+      addMessage("system", "✓ 认证成功，可以开始对话");
+      return;
+    }
+    if (t === "AUTH_FAILED") {
+      appendLog("ERROR", "认证失败：" + (payload.message || "Token 错误"));
+      addMessage("system", "✗ 认证失败，请在设置中检查 Token");
+      return;
+    }
+    // UNAUTHORIZED：未认证就发了消息（通常是 ws_token 设置了但客户端未发 AUTH）
+    if (t === "ERROR" && payload.code === "UNAUTHORIZED") {
+      appendLog("WARN", "未认证，请在设置中填写正确的 Token");
+      addMessage("system", "✗ 未认证，请点击右上角⚙️ → 填写 Token → 重新连接");
+      return;
+    }
+
     // TEXT：AI 回复文字（含镜像来的小智回复）
     if (t === "TEXT") {
       var txt = payload.text || "";
@@ -539,6 +557,8 @@
       addMessage("system", "已连接 AI 助手");
       if (tokenInput && tokenInput.value) {
         safeSend("AUTH", { token: tokenInput.value }, traceId("auth"));
+        // 保存 Token 到 localStorage，下次自动填充
+        try { localStorage.setItem("ws_token", tokenInput.value); } catch (e) {}
       }
       if (pingTimer) { clearInterval(pingTimer); }
       pingTimer = setInterval(function () {
@@ -705,12 +725,43 @@
 
   setStatus("未连接", "disconnected");
 
+  // --- Token 自动加载（优先 URL 参数 ?token=xxx，其次 localStorage）---
+  var autoToken = "";
+  try {
+    var urlSearch = window.location.search.slice(1).split("&");
+    var ui;
+    for (ui = 0; ui < urlSearch.length; ui += 1) {
+      var pair = urlSearch[ui].split("=");
+      if (pair[0] === "token" && pair[1]) {
+        autoToken = decodeURIComponent(pair[1]);
+        break;
+      }
+    }
+    if (!autoToken) {
+      autoToken = (window.localStorage && localStorage.getItem("ws_token")) || "";
+    }
+  } catch (e) {}
+  if (autoToken && tokenInput) {
+    tokenInput.value = autoToken;
+    appendLog("INFO", "已自动加载 Token（来自" + (window.location.search.indexOf("token=") >= 0 ? "URL" : "本地存储") + "）");
+  }
+
+  // 设置面板关闭时保存 Token 到 localStorage
+  if (settingsCloseBtn) {
+    settingsCloseBtn.onclick = function () {
+      closeSettings();
+      if (tokenInput && tokenInput.value) {
+        try { localStorage.setItem("ws_token", tokenInput.value); } catch (e) {}
+      }
+    };
+  }
+
   var autoHostname = window.location.hostname || "192.168.1.6";
   var autoWsUrl = "ws://" + autoHostname + ":8765";
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260405a",
+    "JS版本: v20260405b",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
