@@ -10,6 +10,8 @@
   "devDependencies": {
     "@babel/cli": "^7.28.0",
     "@babel/core": "^7.28.0",
-    "@babel/preset-env": "^7.28.0"
+    "@babel/preset-env": "^7.28.0",
+    "live2d-widget": "^3.1.4",
+    "live2d-widget-model-shizuku": "^1.0.5"
   }
 }

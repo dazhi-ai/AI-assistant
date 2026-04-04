@@ -88,12 +88,18 @@ class WeatherService:
         return bool(self._api_key)
 
     def _request_json_sync(self, url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
-        """Perform one GET request and parse JSON body."""
+        """Perform one GET request and parse JSON body, supporting gzip response."""
+        import gzip
         req_headers = dict(headers) if headers else {}
+        req_headers.setdefault("Accept-Encoding", "gzip, deflate")
         req = request.Request(url, method="GET", headers=req_headers)
         try:
             with request.urlopen(req, timeout=self._timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read()
+                encoding = response.headers.get("Content-Encoding", "")
+                if encoding == "gzip" or (raw[:2] == b"\x1f\x8b"):
+                    raw = gzip.decompress(raw)
+                return json.loads(raw.decode("utf-8"))
         except error.HTTPError as exc:
             return {"ok": False, "error": f"HTTP error: {exc.code}", "url": url}
         except error.URLError as exc:

@@ -1,87 +1,300 @@
-.app-shell {
-  max-width: 960px;
-  margin: 14px auto;
-  padding: 0 10px 18px;
+/* ===== 顶部导航栏 ===== */
+.top-bar {
+  display: -webkit-box;
+  display: -webkit-flex;
   display: flex;
-  flex-direction: column;
-  gap: 10px;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-box-pack: justify;
+  -webkit-justify-content: space-between;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #171c26;
+  border-bottom: 1px solid #2a3243;
+  position: -webkit-sticky;
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
-.title {
-  margin: 0;
-  font-size: 22px;
+.bar-left {
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
 }
 
-.subtitle {
-  margin: 6px 0 0;
+.app-name {
+  font-size: 18px;
+  font-weight: bold;
+  color: #e7ecf3;
+  margin-right: 8px;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #555;
+  -webkit-flex-shrink: 0;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+.status-dot.connected    { background: #4caf50; }
+.status-dot.connecting   { background: #ff9800; }
+.status-dot.disconnected { background: #ef5350; }
+
+.status-label {
+  font-size: 13px;
   color: #9aa4b2;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.status {
-  margin-top: 10px;
-  font-size: 14px;
-}
-
-.grow {
-  flex: 1;
-}
-
-.qr-image {
-  width: 220px;
-  height: 220px;
-  object-fit: contain;
-  border: 1px solid #334056;
-  border-radius: 8px;
-  background: #0f141d;
-  margin-top: 8px;
-}
-
-.audio-player {
-  width: 100%;
-}
-
-.live2d-container {
-  width: 100%;
-  min-height: 280px;
-  border: 1px solid #2e3a4f;
-  border-radius: 8px;
-  background: #0d1118;
-  margin-top: 8px;
-  overflow: hidden;
-}
-
-.mouth-meter {
-  margin-top: 10px;
+.bar-right {
+  display: -webkit-box;
+  display: -webkit-flex;
   display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
-.mouth-bar {
-  flex: 1;
-  max-width: 320px;
-  height: 10px;
-  border-radius: 999px;
-  background: #2a3243;
+.bar-right button {
+  margin-left: 8px;
+}
+
+.btn-sm {
+  padding: 7px 14px;
+  font-size: 13px;
+}
+
+/* ===== 主体滚动区 ===== */
+.app-body {
+  padding: 12px 12px 80px;
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-orient: vertical;
+  -webkit-box-direction: normal;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+}
+
+/* 主体各子区块之间的间距 */
+.app-body > * {
+  margin-bottom: 10px;
+}
+.app-body > *:last-child {
+  margin-bottom: 0;
+}
+
+/* ===== Live2D 嵌入区 ===== */
+.live2d-embed {
+  position: relative;
+  width: 100%;
+  height: 360px;
+  background: #0d1118;
+  border-radius: 16px;
+  border: 1px solid #2a3243;
   overflow: hidden;
 }
 
-.mouth-bar-inner {
+.model-label {
+  position: absolute;
+  bottom: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: #5a6a80;
+  pointer-events: none;
+}
+
+/* ===== 口型能量条 ===== */
+.mouth-track {
+  height: 4px;
+  border-radius: 999px;
+  background: #1e2533;
+  overflow: hidden;
+}
+
+.mouth-bar-fill {
   width: 0%;
   height: 100%;
-  background: #4ec3ff;
+  background: #3b77ff;
+  border-radius: 999px;
+}
+
+/* ===== AI 回复气泡 ===== */
+.reply-bubble {
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-align: flex-start;
+  -webkit-align-items: flex-start;
+  align-items: flex-start;
+  background: #171c26;
+  border: 1px solid #2a3243;
+  border-radius: 14px;
+  padding: 12px 14px;
+  min-height: 52px;
+}
+
+.reply-icon {
+  -webkit-flex-shrink: 0;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #2f62d6;
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-box-pack: center;
+  -webkit-justify-content: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  color: #fff;
+  margin-right: 10px;
+}
+
+.reply-text {
+  -webkit-box-flex: 1;
+  -webkit-flex: 1;
+  flex: 1;
+  font-size: 15px;
+  line-height: 1.65;
+  color: #e7ecf3;
+  word-break: break-word;
+}
+
+/* ===== 天气卡片区 ===== */
+.weather-section {
+  background: #171c26;
+  border: 1px solid #2a3243;
+  border-radius: 14px;
+  padding: 10px;
+}
+
+.weather-title {
+  font-size: 13px;
+  color: #9aa4b2;
+  margin-bottom: 8px;
+}
+
+.weather-cards {
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.weather-card {
+  -webkit-flex-shrink: 0;
+  flex-shrink: 0;
+  min-width: 100px;
+  background: #0f141d;
+  border: 1px solid #2e3a4f;
+  border-radius: 10px;
+  padding: 10px;
+  margin-right: 8px;
+}
+
+.weather-card:last-child {
+  margin-right: 0;
+}
+
+.weather-date {
+  font-size: 12px;
+  color: #9aa4b2;
+}
+
+.weather-main {
+  margin-top: 6px;
+  font-size: 14px;
+  color: #e7ecf3;
+}
+
+/* ===== 底部固定输入栏 ===== */
+.bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
+  padding: 10px 12px;
+  background: #171c26;
+  border-top: 1px solid #2a3243;
+  z-index: 100;
+}
+
+.chat-input {
+  -webkit-box-flex: 1;
+  -webkit-flex: 1;
+  flex: 1;
+  border: 1px solid #334056;
+  border-radius: 24px;
+  background: #0f141d;
+  color: #e7ecf3;
+  padding: 10px 16px;
+  font-size: 15px;
+  outline: none;
+  margin-right: 8px;
+}
+
+.send-btn {
+  border-radius: 24px;
+  padding: 10px 20px;
+  font-size: 15px;
+}
+
+/* ===== 折叠面板 ===== */
+.config-panel,
+.log-panel {
+  margin: 0 12px 10px;
+  border-radius: 12px;
+}
+
+.config-panel > summary,
+.log-panel > summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: #9aa4b2;
+  padding: 2px 0;
+  outline: none;
+  list-style: none;
+}
+
+.config-panel > summary::-webkit-details-marker { display: none; }
+.log-panel > summary::-webkit-details-marker { display: none; }
+
+.config-panel > summary::before,
+.log-panel > summary::before {
+  content: "\25B6  ";
+  font-size: 11px;
+}
+
+.config-panel[open] > summary::before,
+.log-panel[open] > summary::before {
+  content: "\25BC  ";
+}
+
+.config-body {
+  padding-top: 10px;
 }
 
 .log-box {
-  margin: 0;
-  min-height: 220px;
-  max-height: 360px;
+  margin: 8px 0 0;
+  max-height: 260px;
   overflow: auto;
   padding: 10px;
   background: #0d1118;
@@ -89,68 +302,34 @@
   border-radius: 8px;
   white-space: pre-wrap;
   word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
+/* ===== 心形特效 ===== */
 .heart-effect {
   position: fixed;
   right: 24px;
-  bottom: 24px;
+  bottom: 70px;
   font-size: 52px;
   color: #ff4d73;
   opacity: 0;
+  pointer-events: none;
+  z-index: 200;
 }
 
 .heart-effect.run {
+  -webkit-animation: floatHeart 1000ms ease-out;
   animation: floatHeart 1000ms ease-out;
 }
 
-.weather-cards {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(130px, 1fr));
-  gap: 8px;
-  margin-top: 8px;
+@-webkit-keyframes floatHeart {
+  0%   { opacity: 0; -webkit-transform: translateY(18px) scale(0.5); }
+  30%  { opacity: 1; -webkit-transform: translateY(0) scale(1); }
+  100% { opacity: 0; -webkit-transform: translateY(-40px) scale(1.15); }
 }
-
-.weather-card {
-  background: #0f141d;
-  border: 1px solid #2e3a4f;
-  border-radius: 8px;
-  padding: 8px;
-}
-
-.weather-date {
-  font-size: 13px;
-  color: #9aa4b2;
-}
-
-.weather-main {
-  margin-top: 6px;
-  font-size: 14px;
-}
-
-@media screen and (max-width: 520px) {
-  .weather-cards {
-    grid-template-columns: 1fr;
-  }
-}
-
 @keyframes floatHeart {
-  0% {
-    opacity: 0;
-    transform: translateY(18px) scale(0.5);
-  }
-  30% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-40px) scale(1.15);
-  }
-}
-
-@media screen and (max-width: 768px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
+  0%   { opacity: 0; transform: translateY(18px) scale(0.5); }
+  30%  { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-40px) scale(1.15); }
 }

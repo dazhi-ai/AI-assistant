@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 async def _send_message(websocket: ServerConnection, message_type: str, payload: dict, trace_id: str | None = None) -> None:
     """Send one protocol message to the client."""
+    logger.info("SEND %s payload_keys=%s", message_type, list(payload.keys()))
     await websocket.send(build_message(message_type, payload, trace_id=trace_id).to_json())
 
 
@@ -175,6 +176,7 @@ async def handle_client(
     audio_input_bytes = bytearray()
     try:
         async for raw_message in websocket:
+            logger.info("RAW MSG RECEIVED: %s", raw_message[:120] if isinstance(raw_message, str) else f"<binary {len(raw_message)}B>")
             if not isinstance(raw_message, str):
                 await _send_message(websocket, "ERROR", {"code": "BAD_MESSAGE", "message": "Only text messages are supported."})
                 continue

@@ -10,6 +10,7 @@
   var disconnectBtn = document.getElementById("disconnectBtn");
   var sendTextBtn = document.getElementById("sendTextBtn");
   var statusText = document.getElementById("statusText");
+  var statusDot = document.getElementById("statusDot");
   var textInput = document.getElementById("textInput");
   var audioFileInput = document.getElementById("audioFileInput");
   var sendAudioBtn = document.getElementById("sendAudioBtn");
@@ -22,13 +23,14 @@
   var effectText = document.getElementById("effectText");
   var heartEffect = document.getElementById("heartEffect");
   var weatherText = document.getElementById("weatherText");
+  var weatherSection = document.getElementById("weatherSection");
   var weatherCards = document.getElementById("weatherCards");
   var live2dContainer = document.getElementById("live2dContainer");
   var modelText = document.getElementById("modelText");
   var mouthBarInner = document.getElementById("mouthBarInner");
+  var aiReplyText = document.getElementById("aiReplyText");
 
-  var live2dApp = null;
-  var currentModel = null;
+  var live2dLoaded = false;
   var audioCtx = null;
   var analyser = null;
   var analyserData = null;
@@ -44,10 +46,10 @@
   var userRequestedDisconnect = false;
 
   var MODEL_URLS = {
-    default: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/haru/haru.model3.json",
-    sport: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/hiyori_pro_t10/hiyori_pro_t10.model3.json",
-    cute: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/shizuku/shizuku.model.json",
-    tech: "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/epsilon2.1/Epsilon2.1.model.json"
+    default: "./assets/models/shizuku/shizuku.model.json",
+    sport: "./assets/models/shizuku/shizuku.model.json",
+    cute: "./assets/models/shizuku/shizuku.model.json",
+    tech: "./assets/models/shizuku/shizuku.model.json"
   };
 
   function nowTs() {
@@ -73,8 +75,11 @@
     logBox.textContent = text + logBox.textContent;
   }
 
-  function setStatus(text) {
-    statusText.textContent = "状态：" + text;
+  function setStatus(text, dotClass) {
+    statusText.textContent = text;
+    if (statusDot) {
+      statusDot.className = "status-dot " + (dotClass || "disconnected");
+    }
   }
 
   function safeSend(type, payload, customTraceId) {
@@ -116,9 +121,12 @@
   }
 
   function playAudio() {
-    audioPlayer.play()["catch"](function () {
-      appendLog("WARN", "浏览器阻止了自动播放，请手动点击播放按钮。");
-    });
+    var ret = audioPlayer.play();
+    if (ret && typeof ret["catch"] === "function") {
+      ret["catch"](function () {
+        appendLog("WARN", "浏览器阻止了自动播放，请手动点击播放按钮。");
+      });
+    }
   }
 
   function renderAudio(payload) {
@@ -138,6 +146,10 @@
     var adm2 = payload.adm2 || "";
     var forecast = payload.forecast || [];
     weatherText.textContent = "城市：" + cityText + " " + adm1 + " " + adm2;
+    // 有天气数据时显示天气区域
+    if (weatherSection) {
+      weatherSection.className = weatherSection.className.replace(" hidden", "").replace("hidden", "");
+    }
 
     while (weatherCards.firstChild) {
       weatherCards.removeChild(weatherCards.firstChild);
@@ -174,96 +186,84 @@
   }
 
   function initLive2D() {
-    if (!window.PIXI || !live2dContainer) {
-      appendLog("WARN", "PIXI 未加载，Live2D 功能不可用。");
-      return;
+    if (typeof L2Dwidget === "undefined" || typeof L2Dwidget.init !== "function") {
+      appendLog("WARN", "L2Dwidget 未加载（L2Dwidget=" + typeof L2Dwidget + "）");
+      modelText.textContent = "Live2D 不可用：L2Dwidget 未能加载";
+      return false;
     }
-    if (live2dApp) {
-      return;
-    }
-    live2dApp = new window.PIXI.Application({
-      width: live2dContainer.clientWidth || 640,
-      height: 320,
-      backgroundColor: 0x0d1118,
-      antialias: true
-    });
-    live2dContainer.appendChild(live2dApp.view);
+    return true;
   }
 
   function loadModel(modelId, styleText) {
-    initLive2D();
-    if (!live2dApp) {
+    if (!initLive2D()) {
       return;
     }
-    if (!window.PIXI.Live2DModel || !window.PIXI.Live2DModel.from) {
-      appendLog("WARN", "Live2DModel 库未就绪，无法加载模型。");
-      return;
-    }
-
     var url = MODEL_URLS[modelId] || MODEL_URLS.default;
-    window.PIXI.Live2DModel.from(url)
-      .then(function (model) {
-        if (currentModel) {
-          live2dApp.stage.removeChild(currentModel);
+    appendLog("INFO", "开始加载 Live2D 模型: " + url);
+    try {
+      L2Dwidget.init({
+        pluginRootPath: "./",
+        pluginJsPath: "js/",
+        pluginModelPath: "assets/",
+        model: {
+          jsonPath: url,
+          scale: 1
+        },
+        display: {
+          position: "left",
+          width: 180,
+          height: 360,
+          hOffset: 0,
+          vOffset: 0
+        },
+        mobile: {
+          show: true,
+          scale: 0.8
+        },
+        react: {
+          opacityDefault: 0.9,
+          opacityOnHover: 0.2
         }
-        currentModel = model;
-        model.scale.set(0.18);
-        model.x = live2dApp.renderer.width * 0.5;
-        model.y = live2dApp.renderer.height * 0.95;
-        model.anchor.set(0.5, 1);
-        live2dApp.stage.addChild(model);
-        modelText.textContent = "当前模型：" + modelId + "（" + (styleText || "默认") + "）";
-      })
-      ["catch"](function (err) {
-        appendLog("ERROR", "模型加载失败: " + String(err));
       });
+      live2dLoaded = true;
+      modelText.textContent = "当前模型：" + modelId + "（" + (styleText || "默认") + "）";
+      appendLog("INFO", "L2Dwidget 初始化成功，模型加载中...");
+    } catch (e) {
+      appendLog("ERROR", "L2Dwidget 加载异常: " + String(e));
+    }
   }
 
   function applyMouthValue(value) {
     var v = Math.max(0, Math.min(1, value));
     mouthBarInner.style.width = String(Math.floor(v * 100)) + "%";
-    if (!currentModel || !currentModel.internalModel || !currentModel.internalModel.coreModel) {
-      return;
-    }
-    var coreModel = currentModel.internalModel.coreModel;
-    if (coreModel.setParameterValueById) {
-      coreModel.setParameterValueById("ParamMouthOpenY", v);
-    }
+    // 写入全局 hook 变量，由 L2Dwidget.0.min.js 的 draw 循环在 update() 之后、draw() 之前注入
+    window._live2dMouthValue = v;
   }
 
-  function startMouthSync() {
-    if (!window.AudioContext && !window.webkitAudioContext) {
-      return;
-    }
-    if (!audioCtx) {
-      var Ctx = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new Ctx();
-    }
-    if (!mediaElementSource) {
-      mediaElementSource = audioCtx.createMediaElementSource(audioPlayer);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      analyserData = new Uint8Array(analyser.frequencyBinCount);
-      mediaElementSource.connect(analyser);
-      analyser.connect(audioCtx.destination);
-    }
+  // 基于正弦波的口型动画，不依赖 analyser API，兼容旧 WebView
+  // durationMs：音频总时长（毫秒）；不传则持续运行直到 stopMouthSync
+  function startMouthAnimation(durationMs) {
+    stopMouthSync();
+    var startTs = Date.now();
     function tick() {
-      if (!analyser) {
+      var elapsed = Date.now() - startTs;
+      if (durationMs && elapsed >= durationMs) {
+        applyMouthValue(0);
+        mouthRaf = null;
         return;
       }
-      analyser.getByteFrequencyData(analyserData);
-      var sum = 0;
-      var i = 0;
-      for (i = 0; i < analyserData.length; i += 1) {
-        sum += analyserData[i];
-      }
-      var level = sum / analyserData.length / 255;
-      applyMouthValue(level);
+      // 用 3Hz 正弦波模拟说话节奏，振幅 0.6，底部截断避免嘴完全闭合
+      var phase = elapsed / 1000 * 3 * 2 * 3.14159;
+      var v = Math.max(0, Math.sin(phase) * 0.6 + 0.1);
+      applyMouthValue(v);
       mouthRaf = window.requestAnimationFrame(tick);
     }
-    if (!mouthRaf) {
-      mouthRaf = window.requestAnimationFrame(tick);
-    }
+    mouthRaf = window.requestAnimationFrame(tick);
+  }
+
+  // <audio> 元素路径（FileReader fallback）的口型同步，由 play/pause/ended 事件触发
+  function startMouthSync() {
+    startMouthAnimation(0); // 0 表示持续运行，由 stopMouthSync 结束
   }
 
   function stopMouthSync() {
@@ -347,14 +347,55 @@
     if (!fallbackChunks.length) {
       return;
     }
-    var blob = new Blob(fallbackChunks, { type: "audio/mpeg" });
-    var blobUrl = window.URL.createObjectURL(blob);
-    if (audioPlayer.src && audioPlayer.src.indexOf("blob:") === 0) {
-      window.URL.revokeObjectURL(audioPlayer.src);
+    var totalLen = 0;
+    var i;
+    for (i = 0; i < fallbackChunks.length; i += 1) {
+      totalLen += fallbackChunks[i].length;
     }
-    audioPlayer.src = blobUrl;
+    var merged = new Uint8Array(totalLen);
+    var offset = 0;
+    for (i = 0; i < fallbackChunks.length; i += 1) {
+      merged.set(fallbackChunks[i], offset);
+      offset += fallbackChunks[i].length;
+    }
     fallbackChunks = [];
-    playAudio();
+
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      if (!audioCtx) {
+        audioCtx = new Ctx();
+      }
+      var buf = merged.buffer.slice(0);
+      audioCtx.decodeAudioData(buf, function (decoded) {
+        var src = audioCtx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(audioCtx.destination);
+        src.onended = function () { stopMouthSync(); };
+        src.start(0);
+        // 用正弦波口型动画，时长与音频一致（毫秒）
+        startMouthAnimation(Math.ceil(decoded.duration * 1000));
+        audioText.textContent = "Web Audio 播放中，时长 " + decoded.duration.toFixed(1) + "s";
+        appendLog("INFO", "Web Audio 解码成功，开始播放。");
+      }, function (err) {
+        appendLog("ERROR", "Web Audio 解码失败: " + String(err) + "，改用 FileReader。");
+        playWithFileReader(merged);
+      });
+    } else {
+      playWithFileReader(merged);
+    }
+  }
+
+  function playWithFileReader(merged) {
+    var blob = new Blob([merged], { type: "audio/mpeg" });
+    var reader = new FileReader();
+    reader.onload = function () {
+      audioPlayer.src = reader.result;
+      playAudio();
+    };
+    reader.onerror = function () {
+      appendLog("ERROR", "音频读取失败，FileReader 出错。");
+    };
+    reader.readAsDataURL(blob);
   }
 
   function onMessage(raw) {
@@ -370,7 +411,11 @@
     var payload = data.payload || {};
 
     if (t === "TEXT") {
-      effectText.textContent = "AI回复：" + (payload.text || "");
+      var replyTxt = payload.text || "";
+      if (aiReplyText) {
+        aiReplyText.textContent = replyTxt;
+      }
+      effectText.textContent = replyTxt;
       return;
     }
     if (t === "QRCODE") {
@@ -423,12 +468,12 @@
       socket.close();
     }
     setupAudioStreaming();
-    setStatus("连接中...");
+    setStatus("连接中...", "connecting");
     socket = new WebSocket(wsUrl);
 
     socket.onopen = function () {
       isConnected = true;
-      setStatus("已连接");
+      setStatus("已连接", "connected");
       appendLog("INFO", "WebSocket 连接成功");
       if (tokenInput.value) {
         safeSend("AUTH", { token: tokenInput.value }, traceId("auth"));
@@ -447,7 +492,7 @@
     };
     socket.onclose = function () {
       isConnected = false;
-      setStatus("已断开");
+      setStatus("已断开", "disconnected");
       appendLog("INFO", "WebSocket 连接关闭");
       if (pingTimer) {
         clearInterval(pingTimer);
@@ -481,8 +526,8 @@
       clearInterval(pingTimer);
       pingTimer = null;
     }
-    isConnected = false;
-    setStatus("已断开");
+  isConnected = false;
+  setStatus("已断开", "disconnected");
   }
 
   function sendTextCommand() {
@@ -565,7 +610,37 @@
   audioPlayer.addEventListener("pause", stopMouthSync);
   audioPlayer.addEventListener("ended", stopMouthSync);
 
-  setStatus("未连接");
+  setStatus("未连接", "disconnected");
+
+  appendLog("DIAG", [
+    "JS版本: v20260404n",
+    "L2Dwidget: " + typeof L2Dwidget,
+    "FileReader: " + typeof window.FileReader,
+    "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
+    "UA: " + navigator.userAgent.slice(0, 60)
+  ].join(" | "));
+
   initLive2D();
   loadModel("default", "默认");
+
+  // Live2D 人物重定位：L2Dwidget 创建的浮动 div 移入页面容器
+  function relocateLive2DWidget() {
+    var widget = document.getElementById("live2d-widget");
+    if (!widget) {
+      setTimeout(relocateLive2DWidget, 600);
+      return;
+    }
+    if (live2dContainer && widget.parentNode !== live2dContainer) {
+      widget.style.position = "absolute";
+      widget.style.bottom = "0";
+      widget.style.left = "0";
+      widget.style.right = "0";
+      widget.style.margin = "0 auto";
+      widget.style.top = "auto";
+      live2dContainer.style.position = "relative";
+      live2dContainer.appendChild(widget);
+      appendLog("INFO", "Live2D 人物已嵌入页面区域");
+    }
+  }
+  setTimeout(relocateLive2DWidget, 800);
 })();
