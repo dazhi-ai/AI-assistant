@@ -417,6 +417,20 @@
   function onAudioChunk(payload) {
     var chunk = payload.chunk_base64 || "";
     if (!chunk) { return; }
+
+    // 收到新音频第一个分片时，立即停止当前正在播放的旧音频
+    var chunkIndex = typeof payload.chunk_index === "number" ? payload.chunk_index : 0;
+    if (chunkIndex === 0) {
+      try { audioPlayer.pause(); audioPlayer.currentTime = 0; } catch (e) {}
+      stopMouthSync();
+      // 清空旧数据队列
+      fallbackChunks = [];
+      sourceQueue = [];
+      // 强制使用 fallback 路径（AudioContext），避免 MSE 跨会话状态污染
+      useMse = false;
+      appendLog("INFO", "新音频到来，已中断旧播放");
+    }
+
     var bytes = base64ToUint8(chunk);
     if (useMse && sourceBuffer) {
       sourceQueue.push(bytes);
@@ -490,14 +504,14 @@
     // 认证响应
     if (t === "AUTH_OK") {
       appendLog("INFO", "认证成功");
-      addMessage("system", "✓ 认证成功，可以开始对话");
-      // 认证后延迟 2s 自动静默查询天气，让天气卡片自动出现
+      addMessage("system", "✓ 已连接");
+      // 认证后延迟 1s 自动请求天气卡片（WEATHER_QUERY 不走 AI，不产生聊天气泡）
       setTimeout(function () {
         if (socket && socket.readyState === 1) {
-          appendLog("INFO", "自动查询天气...");
-          safeSend("TEXT", { text: "今天天气怎么样" });
+          appendLog("INFO", "自动加载天气...");
+          safeSend("WEATHER_QUERY", { city: "武汉武昌" });
         }
-      }, 2000);
+      }, 1000);
       return;
     }
     if (t === "AUTH_FAILED") {
@@ -568,13 +582,13 @@
         try { localStorage.setItem("ws_token", tokenInput.value); } catch (e) {}
         // 有 Token 时等 AUTH_OK 再查天气（在 AUTH_OK 处理中触发）
       } else {
-        // 无 Token（服务器无鉴权要求），直接延迟查天气
+        // 无 Token（服务器无鉴权要求），直接延迟请求天气卡片
         setTimeout(function () {
           if (socket && socket.readyState === 1) {
-            appendLog("INFO", "自动查询天气（无鉴权）...");
-            safeSend("TEXT", { text: "今天天气怎么样" });
+            appendLog("INFO", "自动加载天气（无鉴权）...");
+            safeSend("WEATHER_QUERY", { city: "武汉武昌" });
           }
-        }, 2000);
+        }, 1000);
       }
       if (pingTimer) { clearInterval(pingTimer); }
       pingTimer = setInterval(function () {
@@ -777,7 +791,7 @@
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260405c",
+    "JS版本: v20260405d",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),

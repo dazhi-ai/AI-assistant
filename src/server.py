@@ -170,6 +170,7 @@ async def handle_client(
     assistant: AssistantService,
     tts_service: TTSService,
     asr_service: ASRService,
+    weather_service=None,
 ) -> None:
     """Handle one client connection using protocol-based events."""
     # 声明使用模块级全局集合，避免 Python 将函数内赋值操作误判为局部变量
@@ -248,6 +249,57 @@ async def handle_client(
 
             if message.type == "PING":
                 await _send_message(websocket, "PONG", {"ok": True}, trace_id=message.trace_id)
+                continue
+
+            # 客户端直接请求天气卡片（不走 AI，不产生聊天气泡）
+            if message.type == "WEATHER_QUERY":
+                city = str(message.payload.get("city", "")).strip()
+                if not city:
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "BAD_WEATHER_QUERY", "message": "payload.city is required."},
+                        trace_id=message.trace_id,
+                    )
+                    continue
+                if weather_service is None or not weather_service.enabled:
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "WEATHER_DISABLED", "message": "天气服务未启用。"},
+                        trace_id=message.trace_id,
+                    )
+                    continue
+                try:
+                    result = await weather_service.get_weather_forecast(city)
+                    if result.get("ok"):
+                        await _send_message(
+                            websocket,
+                            "WEATHER_CARD",
+                            {
+                                "city": result.get("city", ""),
+                                "adm1": result.get("adm1", ""),
+                                "adm2": result.get("adm2", ""),
+                                "forecast": result.get("forecast", []),
+                            },
+                            trace_id=message.trace_id,
+                        )
+                        logger.info("WEATHER_QUERY served for city: %s", city)
+                    else:
+                        await _send_message(
+                            websocket,
+                            "ERROR",
+                            {"code": "WEATHER_FAILED", "message": result.get("error", "天气查询失败")},
+                            trace_id=message.trace_id,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Error handling WEATHER_QUERY: %s", exc)
+                    await _send_message(
+                        websocket,
+                        "ERROR",
+                        {"code": "WEATHER_ERROR", "message": str(exc)},
+                        trace_id=message.trace_id,
+                    )
                 continue
 
             if message.type == "AUDIO_INPUT_CHUNK":
@@ -449,7 +501,7 @@ async def start_server(settings: Settings) -> None:
         asyncio.create_task(_serve_knowledge_http(knowledge_tcp_server))
 
     async with websockets.serve(
-        lambda ws: handle_client(ws, settings, assistant, tts_service, asr_service),
+        lambda ws: handle_client(ws, settings, assistant, tts_service, asr_service, weather),
         settings.host,
         settings.port,
     ):
