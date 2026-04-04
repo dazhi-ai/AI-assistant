@@ -172,6 +172,8 @@ async def handle_client(
     asr_service: ASRService,
 ) -> None:
     """Handle one client connection using protocol-based events."""
+    # 声明使用模块级全局集合，避免 Python 将函数内赋值操作误判为局部变量
+    global _tablet_websockets
     logger.info("Client connected")
     session_id = str(id(websocket))
     authed = settings.ws_token == ""
@@ -231,7 +233,7 @@ async def handle_client(
                             )
                         except Exception:  # noqa: BLE001
                             dead.add(ws)
-                    _tablet_websockets -= dead
+                    _tablet_websockets.difference_update(dead)
                     logger.info("Mirrored xiaozhi text to %d tablet(s): %s", len(_tablet_websockets), ai_text[:40])
                 continue
 
