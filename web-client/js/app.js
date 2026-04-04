@@ -188,61 +188,181 @@
   if (settingsCloseBtn) { settingsCloseBtn.onclick = closeSettings; }
 
   // ============================================================
-  // 语音输入
+  // 语音输入（getUserMedia + WAV 编码，兼容 Android 4.4+）
+  // 交互：按住说话，松开发送
   // ============================================================
 
-  function initVoiceInput() {
-    var SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechAPI) {
-      if (voiceBtn) { voiceBtn.style.display = "none"; }
-      appendLog("WARN", "当前浏览器不支持语音识别（需要 Chrome 33+）");
+  var voiceMediaStream  = null;  // 麦克风流
+  var voiceAudioCtx     = null;  // 录音用 AudioContext（与播放分开）
+  var voiceScriptNode   = null;  // ScriptProcessorNode 采集 PCM
+  var voiceBuffers      = [];    // Float32Array 片段列表
+  var voiceSampleRate   = 44100; // 实际采样率，从 AudioContext 读取
+
+  function startVoiceRecord() {
+    if (isRecording) { return; } // 防止重复触发
+
+    // 优先 getUserMedia（Android 4.4 / Chrome 21+ 支持，HTTP 下也可用）
+    var gum = navigator.getUserMedia      ||
+              navigator.webkitGetUserMedia ||
+              navigator.mozGetUserMedia    || null;
+
+    if (!gum) {
+      addMessage("system", "当前浏览器不支持录音，请尝试 Chrome 浏览器");
+      appendLog("WARN", "getUserMedia 不可用");
       return;
     }
 
-    recognition = new SpeechAPI();
-    recognition.lang = "zh-CN";
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    gum.call(navigator, { audio: true, video: false }, function (stream) {
+      voiceMediaStream = stream;
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      voiceAudioCtx = new Ctx();
+      voiceSampleRate = voiceAudioCtx.sampleRate;
 
-    recognition.onstart = function () {
+      var source = voiceAudioCtx.createMediaStreamSource(stream);
+      voiceScriptNode = voiceAudioCtx.createScriptProcessor(4096, 1, 1);
+      voiceBuffers = [];
       isRecording = true;
-      if (voiceBtn) { voiceBtn.className = "btn-voice recording"; }
-      appendLog("INFO", "语音识别已开启...");
-    };
 
-    recognition.onresult = function (event) {
-      var transcript = "";
-      if (event.results && event.results.length > 0) {
-        transcript = (event.results[0][0].transcript || "").trim();
-      }
-      if (transcript && textInput) {
-        textInput.value = transcript;
-        sendTextCommand(); // 识别后自动发送
-      }
-    };
-
-    recognition.onerror = function (e) {
-      isRecording = false;
-      if (voiceBtn) { voiceBtn.className = "btn-voice"; }
-      appendLog("WARN", "语音识别错误: " + (e.error || String(e)));
-    };
-
-    recognition.onend = function () {
-      isRecording = false;
-      if (voiceBtn) { voiceBtn.className = "btn-voice"; }
-    };
-
-    if (voiceBtn) {
-      voiceBtn.onclick = function () {
-        if (isRecording) {
-          recognition.stop();
-        } else {
-          try { recognition.start(); } catch (err) {
-            appendLog("WARN", "语音识别启动失败: " + String(err));
-          }
-        }
+      voiceScriptNode.onaudioprocess = function (e) {
+        if (!isRecording) { return; }
+        var raw = e.inputBuffer.getChannelData(0);
+        var copy = new Float32Array(raw.length);
+        copy.set(raw);
+        voiceBuffers.push(copy);
       };
+
+      source.connect(voiceScriptNode);
+      voiceScriptNode.connect(voiceAudioCtx.destination);
+
+      if (voiceBtn) { voiceBtn.className = "btn-voice recording"; }
+      appendLog("INFO", "录音中... 采样率: " + voiceSampleRate);
+    }, function (err) {
+      appendLog("WARN", "麦克风权限被拒绝: " + String(err));
+      addMessage("system", "无法访问麦克风，请检查浏览器权限设置");
+    });
+  }
+
+  function stopVoiceRecord() {
+    if (!isRecording) { return; }
+    isRecording = false;
+
+    if (voiceBtn) { voiceBtn.className = "btn-voice"; }
+
+    // 断开采集节点
+    if (voiceScriptNode) { voiceScriptNode.disconnect(); voiceScriptNode = null; }
+    if (voiceMediaStream) {
+      var tracks = voiceMediaStream.getTracks();
+      var ti;
+      for (ti = 0; ti < tracks.length; ti += 1) { tracks[ti].stop(); }
+      voiceMediaStream = null;
     }
+    if (voiceAudioCtx) { try { voiceAudioCtx.close(); } catch (e) {} voiceAudioCtx = null; }
+
+    if (voiceBuffers.length === 0) {
+      addMessage("system", "录音时间太短，请重试");
+      return;
+    }
+
+    // 合并 Float32 缓冲区
+    var totalLen = 0;
+    var bi;
+    for (bi = 0; bi < voiceBuffers.length; bi += 1) { totalLen += voiceBuffers[bi].length; }
+    var merged = new Float32Array(totalLen);
+    var mOff = 0;
+    for (bi = 0; bi < voiceBuffers.length; bi += 1) {
+      merged.set(voiceBuffers[bi], mOff);
+      mOff += voiceBuffers[bi].length;
+    }
+    voiceBuffers = [];
+
+    // Float32 → Int16 PCM
+    var pcm16 = new Int16Array(merged.length);
+    var pi;
+    for (pi = 0; pi < merged.length; pi += 1) {
+      var s = Math.max(-1, Math.min(1, merged[pi]));
+      pcm16[pi] = s < 0 ? Math.round(s * 32768) : Math.round(s * 32767);
+    }
+
+    // 编码为 WAV 并发送到服务器
+    var wavBytes = encodeWav(pcm16, voiceSampleRate);
+    appendLog("INFO", "WAV 大小: " + wavBytes.length + " bytes，发送中...");
+    sendVoiceWav(wavBytes);
+  }
+
+  // WAV 编码（RIFF/PCM，单声道 16bit）
+  function encodeWav(pcm16, sampleRate) {
+    var dataSize = pcm16.length * 2; // Int16 = 2 bytes
+    var buf = new ArrayBuffer(44 + dataSize);
+    var v = new DataView(buf);
+    var i;
+    var ws = function (off, str) {
+      for (i = 0; i < str.length; i += 1) { v.setUint8(off + i, str.charCodeAt(i)); }
+    };
+    ws(0, "RIFF");
+    v.setUint32(4,  36 + dataSize, true);
+    ws(8, "WAVE");
+    ws(12, "fmt ");
+    v.setUint32(16, 16, true);         // PCM chunk size
+    v.setUint16(20,  1, true);         // format: PCM
+    v.setUint16(22,  1, true);         // channels: 1
+    v.setUint32(24, sampleRate, true);
+    v.setUint32(28, sampleRate * 2, true); // byte rate (sampleRate × 1ch × 2bytes)
+    v.setUint16(32,  2, true);         // block align
+    v.setUint16(34, 16, true);         // bits per sample
+    ws(36, "data");
+    v.setUint32(40, dataSize, true);
+    var off = 44;
+    for (i = 0; i < pcm16.length; i += 1) {
+      v.setInt16(off, pcm16[i], true);
+      off += 2;
+    }
+    return new Uint8Array(buf);
+  }
+
+  // 通过 AUDIO_INPUT_CHUNK + AUDIO_INPUT_END 发送 WAV 到服务器 ASR
+  function sendVoiceWav(bytes) {
+    var chunkSize = 32 * 1024;
+    var total = Math.ceil(bytes.length / chunkSize);
+    var trace = traceId("voice");
+    var i;
+    for (i = 0; i < total; i += 1) {
+      var part = bytes.subarray(i * chunkSize, Math.min((i + 1) * chunkSize, bytes.length));
+      safeSend("AUDIO_INPUT_CHUNK", {
+        chunk_index: i,
+        chunk_base64: uint8ToBase64(part),
+        file_name: "voice.wav",
+        mime_type: "audio/wav"
+      }, trace);
+    }
+    safeSend("AUDIO_INPUT_END", { file_name: "voice.wav", chunks: total }, trace);
+  }
+
+  function initVoiceInput() {
+    if (!voiceBtn) { return; }
+
+    // 提示文字
+    voiceBtn.title = "按住说话";
+
+    // === 触摸事件（移动端/平板主要方式）===
+    voiceBtn.addEventListener("touchstart", function (e) {
+      e.preventDefault(); // 防止触发 click 和页面滚动
+      startVoiceRecord();
+    });
+    voiceBtn.addEventListener("touchend", function (e) {
+      e.preventDefault();
+      stopVoiceRecord();
+    });
+    voiceBtn.addEventListener("touchcancel", function (e) {
+      e.preventDefault();
+      stopVoiceRecord();
+    });
+
+    // === 鼠标事件（PC 调试用）===
+    voiceBtn.addEventListener("mousedown", startVoiceRecord);
+    voiceBtn.addEventListener("mouseup",   stopVoiceRecord);
+    voiceBtn.addEventListener("mouseleave", function () {
+      if (isRecording) { stopVoiceRecord(); }
+    });
   }
 
   // ============================================================
@@ -791,7 +911,7 @@
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260405d",
+    "JS版本: v20260405e",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
