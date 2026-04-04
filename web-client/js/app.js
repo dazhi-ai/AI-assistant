@@ -4,53 +4,67 @@
   var reconnectTimer = null;
   var pingTimer = null;
 
-  var wsUrlInput = document.getElementById("wsUrlInput");
-  var tokenInput = document.getElementById("tokenInput");
-  var connectBtn = document.getElementById("connectBtn");
-  var disconnectBtn = document.getElementById("disconnectBtn");
-  var sendTextBtn = document.getElementById("sendTextBtn");
-  var statusText = document.getElementById("statusText");
-  var statusDot = document.getElementById("statusDot");
-  var textInput = document.getElementById("textInput");
+  // ---- DOM 引用 ----
+  var wsUrlInput     = document.getElementById("wsUrlInput");
+  var tokenInput     = document.getElementById("tokenInput");
+  var connectBtn     = document.getElementById("connectBtn");
+  var disconnectBtn  = document.getElementById("disconnectBtn");
+  var sendTextBtn    = document.getElementById("sendTextBtn");
+  var statusText     = document.getElementById("statusText");
+  var statusDot      = document.getElementById("statusDot");
+  var textInput      = document.getElementById("textInput");
   var audioFileInput = document.getElementById("audioFileInput");
-  var sendAudioBtn = document.getElementById("sendAudioBtn");
-  var audioUploadText = document.getElementById("audioUploadText");
-  var logBox = document.getElementById("logBox");
-  var qrText = document.getElementById("qrText");
-  var qrImage = document.getElementById("qrImage");
-  var audioPlayer = document.getElementById("audioPlayer");
-  var audioText = document.getElementById("audioText");
-  var effectText = document.getElementById("effectText");
-  var heartEffect = document.getElementById("heartEffect");
-  var weatherText = document.getElementById("weatherText");
+  var sendAudioBtn   = document.getElementById("sendAudioBtn");
+  var audioUploadText= document.getElementById("audioUploadText");
+  var logBox         = document.getElementById("logBox");
+  var qrText         = document.getElementById("qrText");
+  var qrImage        = document.getElementById("qrImage");
+  var audioPlayer    = document.getElementById("audioPlayer");
+  var audioText      = document.getElementById("audioText");
+  var effectText     = document.getElementById("effectText");
+  var heartEffect    = document.getElementById("heartEffect");
+  var weatherText    = document.getElementById("weatherText");
   var weatherSection = document.getElementById("weatherSection");
-  var weatherCards = document.getElementById("weatherCards");
-  var live2dContainer = document.getElementById("live2dContainer");
-  var modelText = document.getElementById("modelText");
-  var mouthBarInner = document.getElementById("mouthBarInner");
-  var aiReplyText = document.getElementById("aiReplyText");
+  var weatherCards   = document.getElementById("weatherCards");
+  var live2dContainer= document.getElementById("live2dContainer");
+  var modelText      = document.getElementById("modelText");
+  var mouthBarInner  = document.getElementById("mouthBarInner");
+  var aiReplyText    = document.getElementById("aiReplyText");
 
-  var live2dLoaded = false;
-  var audioCtx = null;
-  var analyser = null;
-  var analyserData = null;
-  var mouthRaf = null;
+  // 设置面板相关 DOM
+  var settingsBtn      = document.getElementById("settingsBtn");
+  var settingsPanel    = document.getElementById("settingsPanel");
+  var settingsCloseBtn = document.getElementById("settingsCloseBtn");
+
+  // 语音输入相关 DOM
+  var voiceBtn = document.getElementById("voiceBtn");
+
+  // ---- Live2D / 音频流状态变量 ----
+  var live2dLoaded     = false;
+  var audioCtx         = null;
+  var analyser         = null;
+  var analyserData     = null;
+  var mouthRaf         = null;
   var mediaElementSource = null;
 
-  var mediaSource = null;
+  var mediaSource    = null;
   var mediaSourceUrl = null;
-  var sourceBuffer = null;
-  var sourceQueue = [];
-  var useMse = false;
+  var sourceBuffer   = null;
+  var sourceQueue    = [];
+  var useMse         = false;
   var fallbackChunks = [];
   var userRequestedDisconnect = false;
 
   var MODEL_URLS = {
-    default: "./assets/models/shizuku/shizuku.model.json",
-    sport: "./assets/models/shizuku/shizuku.model.json",
-    cute: "./assets/models/shizuku/shizuku.model.json",
-    tech: "./assets/models/shizuku/shizuku.model.json"
+    "default": "./assets/models/shizuku/shizuku.model.json",
+    "sport":   "./assets/models/shizuku/shizuku.model.json",
+    "cute":    "./assets/models/shizuku/shizuku.model.json",
+    "tech":    "./assets/models/shizuku/shizuku.model.json"
   };
+
+  // ============================================================
+  // 工具函数
+  // ============================================================
 
   function nowTs() {
     return Math.floor(Date.now() / 1000);
@@ -72,11 +86,15 @@
       }
     }
     text += "\n\n";
-    logBox.textContent = text + logBox.textContent;
+    if (logBox) {
+      logBox.textContent = text + logBox.textContent;
+    }
   }
 
   function setStatus(text, dotClass) {
-    statusText.textContent = text;
+    if (statusText) {
+      statusText.textContent = text;
+    }
     if (statusDot) {
       statusDot.className = "status-dot " + (dotClass || "disconnected");
     }
@@ -97,12 +115,120 @@
     appendLog("SEND " + message.type, message);
   }
 
+  // ============================================================
+  // 设置面板开关
+  // ============================================================
+
+  function openSettings() {
+    if (settingsPanel) {
+      settingsPanel.className = settingsPanel.className.replace(" hidden", "").replace("hidden", "");
+    }
+  }
+
+  function closeSettings() {
+    if (settingsPanel) {
+      if (settingsPanel.className.indexOf("hidden") === -1) {
+        settingsPanel.className = settingsPanel.className + " hidden";
+      }
+    }
+  }
+
+  if (settingsBtn) {
+    settingsBtn.onclick = openSettings;
+  }
+  if (settingsCloseBtn) {
+    settingsCloseBtn.onclick = closeSettings;
+  }
+
+  // ============================================================
+  // 语音输入（webkitSpeechRecognition / SpeechRecognition）
+  // ============================================================
+
+  var recognition = null;
+  var isRecording = false;
+
+  function initVoiceInput() {
+    var SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechAPI) {
+      // 当前浏览器不支持语音识别，隐藏麦克风按钮
+      if (voiceBtn) {
+        voiceBtn.style.display = "none";
+      }
+      appendLog("WARN", "当前浏览器不支持语音识别（需要 Chrome / WebView 33+）");
+      return;
+    }
+
+    recognition = new SpeechAPI();
+    recognition.lang = "zh-CN";        // 识别语言：普通话
+    recognition.continuous = false;    // 单次识别，说完即停
+    recognition.interimResults = false;// 只取最终结果，不返回中间结果
+
+    recognition.onstart = function () {
+      isRecording = true;
+      if (voiceBtn) {
+        voiceBtn.className = "btn-voice recording";
+      }
+      appendLog("INFO", "语音识别已开启，请说话...");
+    };
+
+    recognition.onresult = function (event) {
+      var transcript = "";
+      if (event.results && event.results.length > 0) {
+        transcript = event.results[0][0].transcript || "";
+      }
+      if (transcript && textInput) {
+        textInput.value = transcript;
+        appendLog("INFO", "语音识别结果: " + transcript);
+        // 识别完成后自动发送
+        sendTextCommand();
+      }
+    };
+
+    recognition.onerror = function (e) {
+      isRecording = false;
+      if (voiceBtn) {
+        voiceBtn.className = "btn-voice";
+      }
+      appendLog("WARN", "语音识别错误: " + (e.error || String(e)));
+    };
+
+    recognition.onend = function () {
+      isRecording = false;
+      if (voiceBtn) {
+        voiceBtn.className = "btn-voice";
+      }
+    };
+
+    if (voiceBtn) {
+      voiceBtn.onclick = function () {
+        if (isRecording) {
+          // 再次点击停止
+          recognition.stop();
+        } else {
+          try {
+            recognition.start();
+          } catch (err) {
+            appendLog("WARN", "语音识别启动失败: " + String(err));
+          }
+        }
+      };
+    }
+  }
+
+  // ============================================================
+  // 特效
+  // ============================================================
+
   function playHeartEffect() {
     heartEffect.className = "heart-effect run";
     setTimeout(function () {
       heartEffect.className = "heart-effect hidden";
     }, 1100);
   }
+
+  // ============================================================
+  // QR码 / 音频 / 天气
+  // ============================================================
 
   function renderQRCode(payload) {
     var qrimg = payload.qrimg || "";
@@ -145,12 +271,15 @@
     var adm1 = payload.adm1 || "";
     var adm2 = payload.adm2 || "";
     var forecast = payload.forecast || [];
-    weatherText.textContent = "城市：" + cityText + " " + adm1 + " " + adm2;
-    // 有天气数据时显示天气区域
+    if (weatherText) {
+      weatherText.textContent = "城市：" + cityText + " " + adm1 + " " + adm2;
+    }
+    // 有天气数据时才显示天气区域
     if (weatherSection) {
       weatherSection.className = weatherSection.className.replace(" hidden", "").replace("hidden", "");
     }
 
+    if (!weatherCards) { return; }
     while (weatherCards.firstChild) {
       weatherCards.removeChild(weatherCards.firstChild);
     }
@@ -174,7 +303,8 @@
       var mainNode = document.createElement("div");
       mainNode.className = "weather-main";
       mainNode.textContent =
-        (day.text_day || "") + " / " + (day.text_night || "") + "  " + (day.temp_min || "") + "~" + (day.temp_max || "") + "°C";
+        (day.text_day || "") + " / " + (day.text_night || "") +
+        "  " + (day.temp_min || "") + "~" + (day.temp_max || "") + "°C";
       var windNode = document.createElement("div");
       windNode.className = "muted";
       windNode.textContent = "风向：" + (day.wind_dir_day || "");
@@ -185,20 +315,22 @@
     }
   }
 
+  // ============================================================
+  // Live2D
+  // ============================================================
+
   function initLive2D() {
     if (typeof L2Dwidget === "undefined" || typeof L2Dwidget.init !== "function") {
       appendLog("WARN", "L2Dwidget 未加载（L2Dwidget=" + typeof L2Dwidget + "）");
-      modelText.textContent = "Live2D 不可用：L2Dwidget 未能加载";
+      if (modelText) { modelText.textContent = "Live2D 不可用：L2Dwidget 未能加载"; }
       return false;
     }
     return true;
   }
 
   function loadModel(modelId, styleText) {
-    if (!initLive2D()) {
-      return;
-    }
-    var url = MODEL_URLS[modelId] || MODEL_URLS.default;
+    if (!initLive2D()) { return; }
+    var url = MODEL_URLS[modelId] || MODEL_URLS["default"];
     appendLog("INFO", "开始加载 Live2D 模型: " + url);
     try {
       L2Dwidget.init({
@@ -226,22 +358,28 @@
         }
       });
       live2dLoaded = true;
-      modelText.textContent = "当前模型：" + modelId + "（" + (styleText || "默认") + "）";
+      if (modelText) {
+        modelText.textContent = "当前模型：" + modelId + "（" + (styleText || "默认") + "）";
+      }
       appendLog("INFO", "L2Dwidget 初始化成功，模型加载中...");
     } catch (e) {
       appendLog("ERROR", "L2Dwidget 加载异常: " + String(e));
     }
   }
 
+  // ============================================================
+  // 口型动画
+  // ============================================================
+
   function applyMouthValue(value) {
     var v = Math.max(0, Math.min(1, value));
-    mouthBarInner.style.width = String(Math.floor(v * 100)) + "%";
-    // 写入全局 hook 变量，由 L2Dwidget.0.min.js 的 draw 循环在 update() 之后、draw() 之前注入
+    if (mouthBarInner) {
+      mouthBarInner.style.width = String(Math.floor(v * 100)) + "%";
+    }
     window._live2dMouthValue = v;
   }
 
   // 基于正弦波的口型动画，不依赖 analyser API，兼容旧 WebView
-  // durationMs：音频总时长（毫秒）；不传则持续运行直到 stopMouthSync
   function startMouthAnimation(durationMs) {
     stopMouthSync();
     var startTs = Date.now();
@@ -252,7 +390,6 @@
         mouthRaf = null;
         return;
       }
-      // 用 3Hz 正弦波模拟说话节奏，振幅 0.6，底部截断避免嘴完全闭合
       var phase = elapsed / 1000 * 3 * 2 * 3.14159;
       var v = Math.max(0, Math.sin(phase) * 0.6 + 0.1);
       applyMouthValue(v);
@@ -261,9 +398,8 @@
     mouthRaf = window.requestAnimationFrame(tick);
   }
 
-  // <audio> 元素路径（FileReader fallback）的口型同步，由 play/pause/ended 事件触发
   function startMouthSync() {
-    startMouthAnimation(0); // 0 表示持续运行，由 stopMouthSync 结束
+    startMouthAnimation(0);
   }
 
   function stopMouthSync() {
@@ -273,6 +409,10 @@
     }
     applyMouthValue(0);
   }
+
+  // ============================================================
+  // 音频流（MSE / FileReader fallback）
+  // ============================================================
 
   function setupAudioStreaming() {
     useMse = false;
@@ -303,12 +443,7 @@
   }
 
   function flushSourceQueue() {
-    if (!sourceBuffer || sourceBuffer.updating) {
-      return;
-    }
-    if (!sourceQueue.length) {
-      return;
-    }
+    if (!sourceBuffer || sourceBuffer.updating || !sourceQueue.length) { return; }
     sourceBuffer.appendBuffer(sourceQueue.shift());
   }
 
@@ -325,9 +460,7 @@
 
   function onAudioChunk(payload) {
     var chunk = payload.chunk_base64 || "";
-    if (!chunk) {
-      return;
-    }
+    if (!chunk) { return; }
     var bytes = base64ToUint8(chunk);
     if (useMse && sourceBuffer) {
       sourceQueue.push(bytes);
@@ -339,14 +472,12 @@
 
   function onAudioEnd(payload) {
     var totalChunks = payload.total_chunks || 0;
-    audioText.textContent = "收到语音分片：" + totalChunks;
+    if (audioText) { audioText.textContent = "收到语音分片：" + totalChunks; }
     if (useMse) {
       playAudio();
       return;
     }
-    if (!fallbackChunks.length) {
-      return;
-    }
+    if (!fallbackChunks.length) { return; }
     var totalLen = 0;
     var i;
     for (i = 0; i < fallbackChunks.length; i += 1) {
@@ -362,9 +493,7 @@
 
     var Ctx = window.AudioContext || window.webkitAudioContext;
     if (Ctx) {
-      if (!audioCtx) {
-        audioCtx = new Ctx();
-      }
+      if (!audioCtx) { audioCtx = new Ctx(); }
       var buf = merged.buffer.slice(0);
       audioCtx.decodeAudioData(buf, function (decoded) {
         var src = audioCtx.createBufferSource();
@@ -372,12 +501,13 @@
         src.connect(audioCtx.destination);
         src.onended = function () { stopMouthSync(); };
         src.start(0);
-        // 用正弦波口型动画，时长与音频一致（毫秒）
         startMouthAnimation(Math.ceil(decoded.duration * 1000));
-        audioText.textContent = "Web Audio 播放中，时长 " + decoded.duration.toFixed(1) + "s";
+        if (audioText) {
+          audioText.textContent = "Web Audio 播放中，时长 " + decoded.duration.toFixed(1) + "s";
+        }
         appendLog("INFO", "Web Audio 解码成功，开始播放。");
       }, function (err) {
-        appendLog("ERROR", "Web Audio 解码失败: " + String(err) + "，改用 FileReader。");
+        appendLog("ERROR", "Web Audio 解码失败: " + String(err));
         playWithFileReader(merged);
       });
     } else {
@@ -398,6 +528,10 @@
     reader.readAsDataURL(blob);
   }
 
+  // ============================================================
+  // WebSocket 消息处理
+  // ============================================================
+
   function onMessage(raw) {
     var data = null;
     try {
@@ -412,10 +546,8 @@
 
     if (t === "TEXT") {
       var replyTxt = payload.text || "";
-      if (aiReplyText) {
-        aiReplyText.textContent = replyTxt;
-      }
-      effectText.textContent = replyTxt;
+      if (aiReplyText) { aiReplyText.textContent = replyTxt; }
+      if (effectText)  { effectText.textContent = replyTxt; }
       return;
     }
     if (t === "QRCODE") {
@@ -439,7 +571,7 @@
       return;
     }
     if (t === "ASR_RESULT") {
-      effectText.textContent = "语音识别：" + (payload.text || "");
+      if (effectText) { effectText.textContent = "语音识别：" + (payload.text || ""); }
       return;
     }
     if (t === "MODEL_SWITCH") {
@@ -447,26 +579,28 @@
       return;
     }
     if (t === "EFFECT") {
-      effectText.textContent = "触发特效：" + (payload.action || "");
+      if (effectText) { effectText.textContent = "触发特效：" + (payload.action || ""); }
       if (String(payload.action || "").toUpperCase() === "HEART") {
         playHeartEffect();
       }
       return;
     }
     if (t === "ERROR") {
-      effectText.textContent = "服务端错误：" + (payload.message || "未知错误");
+      if (effectText) { effectText.textContent = "服务端错误：" + (payload.message || "未知错误"); }
     }
   }
 
+  // ============================================================
+  // WebSocket 连接管理
+  // ============================================================
+
   function connect() {
-    var wsUrl = wsUrlInput.value.trim();
+    var wsUrl = (wsUrlInput ? wsUrlInput.value : "").trim();
     if (!wsUrl) {
       appendLog("WARN", "WebSocket 地址为空，无法连接。");
       return;
     }
-    if (socket) {
-      socket.close();
-    }
+    if (socket) { socket.close(); }
     setupAudioStreaming();
     setStatus("连接中...", "connecting");
     socket = new WebSocket(wsUrl);
@@ -475,12 +609,10 @@
       isConnected = true;
       setStatus("已连接", "connected");
       appendLog("INFO", "WebSocket 连接成功");
-      if (tokenInput.value) {
+      if (tokenInput && tokenInput.value) {
         safeSend("AUTH", { token: tokenInput.value }, traceId("auth"));
       }
-      if (pingTimer) {
-        clearInterval(pingTimer);
-      }
+      if (pingTimer) { clearInterval(pingTimer); }
       pingTimer = setInterval(function () {
         safeSend("PING", {}, traceId("heartbeat"));
       }, 20000);
@@ -502,22 +634,16 @@
         userRequestedDisconnect = false;
         return;
       }
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-      }
+      if (reconnectTimer) { clearTimeout(reconnectTimer); }
       reconnectTimer = setTimeout(function () {
-        if (!isConnected) {
-          connect();
-        }
+        if (!isConnected) { connect(); }
       }, 3000);
     };
   }
 
   function disconnect() {
     userRequestedDisconnect = true;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-    }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); }
     if (socket) {
       socket.close();
       socket = null;
@@ -526,17 +652,22 @@
       clearInterval(pingTimer);
       pingTimer = null;
     }
-  isConnected = false;
-  setStatus("已断开", "disconnected");
+    isConnected = false;
+    setStatus("已断开", "disconnected");
   }
 
+  // ============================================================
+  // 文本/音频发送
+  // ============================================================
+
   function sendTextCommand() {
-    var text = (textInput.value || "").trim();
+    var text = textInput ? (textInput.value || "").trim() : "";
     if (!text) {
       appendLog("WARN", "请输入文本指令。");
       return;
     }
     safeSend("TEXT", { text: text });
+    if (textInput) { textInput.value = ""; }
   }
 
   function uint8ToBase64(bytes) {
@@ -574,19 +705,17 @@
         var start = i * chunkSize;
         var end = Math.min(start + chunkSize, bytes.length);
         var part = bytes.subarray(start, end);
-        safeSend(
-          "AUDIO_INPUT_CHUNK",
-          {
-            chunk_index: i,
-            chunk_base64: uint8ToBase64(part),
-            file_name: file.name,
-            mime_type: file.type || "application/octet-stream"
-          },
-          trace
-        );
+        safeSend("AUDIO_INPUT_CHUNK", {
+          chunk_index: i,
+          chunk_base64: uint8ToBase64(part),
+          file_name: file.name,
+          mime_type: file.type || "application/octet-stream"
+        }, trace);
       }
       safeSend("AUDIO_INPUT_END", { file_name: file.name, chunks: total }, trace);
-      audioUploadText.textContent = "已发送音频分片：" + total + "，文件：" + file.name;
+      if (audioUploadText) {
+        audioUploadText.textContent = "已发送音频分片：" + total + "，文件：" + file.name;
+      }
     };
     reader.onerror = function () {
       appendLog("ERROR", "读取音频文件失败。");
@@ -594,50 +723,57 @@
     reader.readAsArrayBuffer(file);
   }
 
-  connectBtn.onclick = connect;
-  disconnectBtn.onclick = disconnect;
-  sendTextBtn.onclick = sendTextCommand;
-  if (sendAudioBtn) {
-    sendAudioBtn.onclick = sendAudioInput;
+  // ============================================================
+  // 事件绑定
+  // ============================================================
+
+  if (connectBtn)    { connectBtn.onclick    = connect; }
+  if (disconnectBtn) { disconnectBtn.onclick = disconnect; }
+  if (sendTextBtn)   { sendTextBtn.onclick   = sendTextCommand; }
+  if (sendAudioBtn)  { sendAudioBtn.onclick  = sendAudioInput; }
+  if (textInput) {
+    textInput.onkeydown = function (event) {
+      var keyCode = event && (event.keyCode || event.which);
+      if (keyCode === 13) { sendTextCommand(); }
+    };
   }
-  textInput.onkeydown = function (event) {
-    var keyCode = event && (event.keyCode || event.which);
-    if (keyCode === 13) {
-      sendTextCommand();
-    }
-  };
-  audioPlayer.addEventListener("play", startMouthSync);
-  audioPlayer.addEventListener("pause", stopMouthSync);
-  audioPlayer.addEventListener("ended", stopMouthSync);
+
+  audioPlayer.addEventListener("play",   startMouthSync);
+  audioPlayer.addEventListener("pause",  stopMouthSync);
+  audioPlayer.addEventListener("ended",  stopMouthSync);
+
+  // ============================================================
+  // 启动序列
+  // ============================================================
 
   setStatus("未连接", "disconnected");
 
-  // 根据当前页面域名自动推断 WebSocket 地址，无需手动填写
+  // 根据当前页面域名自动推断 WebSocket 地址
   var autoHostname = window.location.hostname || "192.168.1.6";
   var autoWsUrl = "ws://" + autoHostname + ":8765";
-  if (wsUrlInput) {
-    wsUrlInput.value = autoWsUrl;
-  }
+  if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260404o",
+    "JS版本: v20260404p",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
+    "SpeechAPI: " + typeof (window.SpeechRecognition || window.webkitSpeechRecognition),
     "自动WS地址: " + autoWsUrl,
     "UA: " + navigator.userAgent.slice(0, 60)
   ].join(" | "));
 
+  initVoiceInput(); // 初始化语音识别
   initLive2D();
   loadModel("default", "默认");
 
-  // 页面加载后自动连接（延迟 1.5s 等 Live2D 初始化完成）
+  // 页面加载后延迟 1.5s 自动连接（等待 Live2D 初始化）
   setTimeout(function () {
     appendLog("INFO", "自动连接 WebSocket: " + autoWsUrl);
     connect();
   }, 1500);
 
-  // Live2D 人物重定位：L2Dwidget 创建的浮动 div 移入页面容器
+  // Live2D 人物重定位：将 L2Dwidget 浮动层移入页面容器
   function relocateLive2DWidget() {
     var widget = document.getElementById("live2d-widget");
     if (!widget) {
@@ -657,4 +793,5 @@
     }
   }
   setTimeout(relocateLive2DWidget, 800);
+
 })();

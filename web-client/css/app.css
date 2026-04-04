@@ -56,20 +56,36 @@
   display: -webkit-box;
   display: -webkit-flex;
   display: flex;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
 }
 
-.bar-right button {
-  margin-left: 8px;
-}
-
-.btn-sm {
-  padding: 7px 14px;
-  font-size: 13px;
+/* 图标按钮（设置、关闭） */
+.btn-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid #2a3243;
+  background: #1e2636;
+  color: #c0cad8;
+  font-size: 18px;
+  cursor: pointer;
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-box-pack: center;
+  -webkit-justify-content: center;
+  justify-content: center;
+  padding: 0;
 }
 
 /* ===== 主体滚动区 ===== */
 .app-body {
-  padding: 12px 12px 80px;
+  padding: 12px 12px 84px;
   display: -webkit-box;
   display: -webkit-flex;
   display: flex;
@@ -79,7 +95,6 @@
   flex-direction: column;
 }
 
-/* 主体各子区块之间的间距 */
 .app-body > * {
   margin-bottom: 10px;
 }
@@ -124,7 +139,7 @@
   border-radius: 999px;
 }
 
-/* ===== AI 回复气泡 ===== */
+/* ===== AI 回复气泡（高度增大 60%，字号增大 50%） ===== */
 .reply-bubble {
   display: -webkit-box;
   display: -webkit-flex;
@@ -135,15 +150,16 @@
   background: #171c26;
   border: 1px solid #2a3243;
   border-radius: 14px;
-  padding: 12px 14px;
-  min-height: 52px;
+  padding: 16px 16px;
+  /* 原 min-height: 52px，增大 60% ≈ 83px，取 120px 保证宽敞 */
+  min-height: 120px;
 }
 
 .reply-icon {
   -webkit-flex-shrink: 0;
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: #2f62d6;
   display: -webkit-box;
@@ -155,18 +171,19 @@
   -webkit-box-pack: center;
   -webkit-justify-content: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: bold;
   color: #fff;
-  margin-right: 10px;
+  margin-right: 12px;
 }
 
 .reply-text {
   -webkit-box-flex: 1;
   -webkit-flex: 1;
   flex: 1;
-  font-size: 15px;
-  line-height: 1.65;
+  /* 原 15px，增大 50% = 22.5px → 23px */
+  font-size: 23px;
+  line-height: 1.6;
   color: #e7ecf3;
   word-break: break-word;
 }
@@ -237,6 +254,38 @@
   z-index: 100;
 }
 
+/* 语音输入按钮 */
+.btn-voice {
+  -webkit-flex-shrink: 0;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid #334056;
+  background: #1e2636;
+  color: #c0cad8;
+  font-size: 20px;
+  cursor: pointer;
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-box-pack: center;
+  -webkit-justify-content: center;
+  justify-content: center;
+  padding: 0;
+  margin-right: 8px;
+}
+
+/* 录音状态：红色脉冲 */
+.btn-voice.recording {
+  background: #c0392b;
+  border-color: #e74c3c;
+  color: #fff;
+}
+
 .chat-input {
   -webkit-box-flex: 1;
   -webkit-flex: 1;
@@ -257,44 +306,92 @@
   font-size: 15px;
 }
 
-/* ===== 折叠面板 ===== */
-.config-panel,
-.log-panel {
-  margin: 0 12px 10px;
-  border-radius: 12px;
+/* ===== 设置全屏面板 ===== */
+.settings-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 300;
+  background: #10131a;
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-orient: vertical;
+  -webkit-box-direction: normal;
+  -webkit-flex-direction: column;
+  flex-direction: column;
 }
 
-.config-panel > summary,
-.log-panel > summary {
-  cursor: pointer;
+.settings-header {
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-box-align: center;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-box-pack: justify;
+  -webkit-justify-content: space-between;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: #171c26;
+  border-bottom: 1px solid #2a3243;
+}
+
+.settings-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: #e7ecf3;
+}
+
+.settings-body {
+  -webkit-box-flex: 1;
+  -webkit-flex: 1;
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px;
+}
+
+.settings-section {
+  background: #171c26;
+  border: 1px solid #2a3243;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.settings-section:last-child {
+  margin-bottom: 0;
+}
+
+.settings-section-title {
   font-size: 14px;
   color: #9aa4b2;
-  padding: 2px 0;
-  outline: none;
-  list-style: none;
+  margin-bottom: 12px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
 }
 
-.config-panel > summary::-webkit-details-marker { display: none; }
-.log-panel > summary::-webkit-details-marker { display: none; }
-
-.config-panel > summary::before,
-.log-panel > summary::before {
-  content: "\25B6  ";
-  font-size: 11px;
+.settings-actions {
+  display: -webkit-box;
+  display: -webkit-flex;
+  display: flex;
+  margin-top: 12px;
 }
 
-.config-panel[open] > summary::before,
-.log-panel[open] > summary::before {
-  content: "\25BC  ";
+.settings-actions button {
+  margin-right: 8px;
 }
 
-.config-body {
-  padding-top: 10px;
+.settings-actions button:last-child {
+  margin-right: 0;
 }
 
 .log-box {
-  margin: 8px 0 0;
-  max-height: 260px;
+  margin: 0;
+  max-height: 300px;
   overflow: auto;
   padding: 10px;
   background: #0d1118;

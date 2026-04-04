@@ -17,8 +17,7 @@
         <span id="statusText" class="status-label">未连接</span>
       </div>
       <div class="bar-right">
-        <button id="connectBtn" class="btn-sm" type="button">连接</button>
-        <button id="disconnectBtn" class="btn-sm" type="button">断开</button>
+        <button id="settingsBtn" class="btn-icon" type="button" title="设置">&#9881;</button>
       </div>
     </header>
 
@@ -30,7 +29,7 @@
         <div id="modelText" class="model-label">模型加载中...</div>
       </div>
 
-      <!-- 口型能量条（音频播放时可见）-->
+      <!-- 口型能量条 -->
       <div class="mouth-track">
         <div id="mouthBarInner" class="mouth-bar-fill"></div>
       </div>
@@ -51,30 +50,44 @@
 
     <!-- 底部固定输入栏 -->
     <div class="bottom-bar">
+      <button id="voiceBtn" class="btn-voice" type="button" title="语音输入">&#127908;</button>
       <input id="textInput" class="chat-input" type="text" placeholder="向 AI 说点什么..." />
       <button id="sendTextBtn" class="send-btn" type="button">发送</button>
     </div>
 
-    <!-- 折叠：连接配置 -->
-    <details class="panel config-panel">
-      <summary>连接配置</summary>
-      <div class="config-body">
-        <label class="field">
-          <span>WebSocket 地址</span>
-          <input id="wsUrlInput" type="text" placeholder="自动检测中..." />
-        </label>
-        <label class="field" style="margin-top:8px;">
-          <span>Token（可选）</span>
-          <input id="tokenInput" type="text" value="" />
-        </label>
+    <!-- 设置全屏面板 -->
+    <div id="settingsPanel" class="settings-panel hidden">
+      <div class="settings-header">
+        <span class="settings-title">设置</span>
+        <button id="settingsCloseBtn" class="btn-icon" type="button">&#10005;</button>
       </div>
-    </details>
+      <div class="settings-body">
 
-    <!-- 折叠：消息日志 -->
-    <details class="panel log-panel">
-      <summary>消息日志</summary>
-      <pre id="logBox" class="log-box"></pre>
-    </details>
+        <!-- 连接配置 -->
+        <div class="settings-section">
+          <div class="settings-section-title">连接配置</div>
+          <label class="field">
+            <span>WebSocket 地址</span>
+            <input id="wsUrlInput" type="text" placeholder="自动检测中..." />
+          </label>
+          <label class="field" style="margin-top:10px;">
+            <span>Token（可选）</span>
+            <input id="tokenInput" type="text" value="" />
+          </label>
+          <div class="settings-actions">
+            <button id="connectBtn" type="button">连接</button>
+            <button id="disconnectBtn" type="button">断开</button>
+          </div>
+        </div>
+
+        <!-- 消息日志 -->
+        <div class="settings-section">
+          <div class="settings-section-title">消息日志</div>
+          <pre id="logBox" class="log-box"></pre>
+        </div>
+
+      </div>
+    </div>
 
     <!-- 隐藏的功能性元素（JS 依赖，不展示） -->
     <div class="hidden">
@@ -93,6 +106,6 @@
     <!-- live2d-widget 本地文件，无 CDN 依赖 -->
     <script src="./js/L2Dwidget.min.js"
             onerror="document.getElementById('logBox').textContent+='[ERR] L2Dwidget.min.js 加载失败\n'"></script>
-    <script src="./js/app.js?v=20260404o"></script>
+    <script src="./js/app.js?v=20260404p"></script>
   </body>
 </html>
