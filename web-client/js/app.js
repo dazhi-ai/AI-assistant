@@ -459,9 +459,9 @@
   }
 
   function connect() {
-    var wsUrl = wsUrlInput.value;
+    var wsUrl = wsUrlInput.value.trim();
     if (!wsUrl) {
-      appendLog("WARN", "请输入 WebSocket 地址。");
+      appendLog("WARN", "WebSocket 地址为空，无法连接。");
       return;
     }
     if (socket) {
@@ -612,16 +612,30 @@
 
   setStatus("未连接", "disconnected");
 
+  // 根据当前页面域名自动推断 WebSocket 地址，无需手动填写
+  var autoHostname = window.location.hostname || "192.168.1.6";
+  var autoWsUrl = "ws://" + autoHostname + ":8765";
+  if (wsUrlInput) {
+    wsUrlInput.value = autoWsUrl;
+  }
+
   appendLog("DIAG", [
-    "JS版本: v20260404n",
+    "JS版本: v20260404o",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
+    "自动WS地址: " + autoWsUrl,
     "UA: " + navigator.userAgent.slice(0, 60)
   ].join(" | "));
 
   initLive2D();
   loadModel("default", "默认");
+
+  // 页面加载后自动连接（延迟 1.5s 等 Live2D 初始化完成）
+  setTimeout(function () {
+    appendLog("INFO", "自动连接 WebSocket: " + autoWsUrl);
+    connect();
+  }, 1500);
 
   // Live2D 人物重定位：L2Dwidget 创建的浮动 div 移入页面容器
   function relocateLive2DWidget() {
