@@ -196,6 +196,21 @@ class ASRService:
                 out.extend(self._volc_deep_collect_text(it, depth + 1))
         return out
 
+    @staticmethod
+    def _unwrap_dict_string(s: str) -> str:
+        """如果字符串是 Python repr 格式的 dict（如 {'confidence':0,'text':'你好'}），提取其中 text 值。"""
+        import ast
+        try:
+            parsed = ast.literal_eval(s)
+            if isinstance(parsed, dict):
+                for k in ("text", "transcript", "content"):
+                    v = parsed.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+        except Exception:
+            pass
+        return ""
+
     def _extract_text(self, data: dict) -> str:
         """
         从多种 ASR 响应格式中提取识别文本。
@@ -203,9 +218,12 @@ class ASRService:
         火山 openspeech /api/v1/asr 在不同 cluster/版本下，成功体差异较大：
         - text / result 字符串 / payload JSON 字符串 / data 嵌套 / resp.utterances 等。
         """
-        # OpenAI
         direct_text = str(data.get("text", "")).strip()
         if direct_text:
+            if direct_text.startswith(("{", "[")) and "'" in direct_text:
+                inner = self._unwrap_dict_string(direct_text)
+                if inner:
+                    return inner
             return direct_text
 
         # result 为纯字符串

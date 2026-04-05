@@ -49,8 +49,11 @@
   var pingTimer = null;
   var live2dLoaded = false;
   var audioCtx = null;
-  var voicePlaybackSource = null; // 当前 Web Audio 播放的 AI 语音，用于在新 TTS 到来时 stop
-  var ttsPlayGeneration = 0;      // 新 TTS 开始时递增，丢弃过期的 decodeAudioData 回调
+  var voicePlaybackSource = null;
+  var ttsPlayGeneration = 0;
+  var ttsBlobUrl = null;
+  var audioUnlocked = false;
+  var audioUnlocking = false;
   var mouthRaf = null;
   var mediaSource = null;
   var mediaSourceUrl = null;
@@ -157,15 +160,24 @@
     var s = String(raw).trim();
     if (!s) { return ""; }
     var c0 = s.charAt(0);
-    if ((c0 === "{" && s.indexOf("}") > 0) || (c0 === "[" && s.indexOf("]") > 0)) {
+    if (c0 === "{" && s.indexOf("}") > 0) {
+      // 标准 JSON
       try {
         var o = JSON.parse(s);
         if (typeof o === "string") { return o.trim(); }
         if (o && typeof o.text === "string") { return String(o.text).trim(); }
         if (o && typeof o.transcript === "string") { return String(o.transcript).trim(); }
         if (o && typeof o.result === "string") { return String(o.result).trim(); }
-        if (Array.isArray(o) && o[0] && typeof o[0].text === "string") { return String(o[0].text).trim(); }
-      } catch (e) { /* 非 JSON，当普通字符串 */ }
+      } catch (e) { /* 非标准 JSON，尝试 Python dict 格式 */ }
+      // Python dict 格式：{'confidence': 0, 'text': '你好'}
+      var m = s.match(/'text'\s*:\s*'([\s\S]*?)'\s*[,}]/);
+      if (m && m[1]) { return m[1].trim(); }
+    }
+    if (c0 === "[" && s.indexOf("]") > 0) {
+      try {
+        var arr = JSON.parse(s);
+        if (Array.isArray(arr) && arr[0] && typeof arr[0].text === "string") { return String(arr[0].text).trim(); }
+      } catch (e) {}
     }
     return s;
   }
@@ -673,6 +685,7 @@
 
     function voicePointerDown(e) {
       e.preventDefault();
+      unlockAudio();
       if (isRecording || (voiceMediaRecorder && voiceMediaRecorder.state === "recording")) {
         stopVoiceRecord();
         return;
@@ -792,22 +805,62 @@
   // 音频播放
   // ============================================================
 
+  function unlockAudio() {
+    if (audioUnlocked) { return; }
+    audioUnlocked = true;
+    audioUnlocking = true;
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      if (!audioCtx) { audioCtx = new Ctx(); }
+      if (audioCtx.state === "suspended" && audioCtx.resume) { audioCtx.resume(); }
+    }
+    try {
+      audioPlayer.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==";
+      audioPlayer.volume = 0;
+      audioPlayer.load();
+      var p = audioPlayer.play();
+      if (p && typeof p.then === "function") {
+        p.then(function () {
+          audioPlayer.pause();
+          audioPlayer.volume = 1;
+          audioUnlocking = false;
+        })["catch"](function () {
+          audioPlayer.volume = 1;
+          audioUnlocking = false;
+        });
+      } else {
+        audioPlayer.volume = 1;
+        audioUnlocking = false;
+      }
+    } catch (e) {
+      audioPlayer.volume = 1;
+      audioUnlocking = false;
+    }
+    appendLog("INFO", "音频播放已解锁");
+  }
+
   function playAudio() {
+    audioPlayer.load();
     var ret = audioPlayer.play();
     if (ret && typeof ret["catch"] === "function") {
-      ret["catch"](function () {
-        appendLog("WARN", "浏览器阻止了自动播放，请手动点击播放按钮。");
+      ret.then(function () {
+        appendLog("INFO", "audioPlayer.play() 成功");
+      })["catch"](function (err) {
+        appendLog("WARN", "自动播放被阻止: " + String(err));
       });
     }
   }
 
-  /** 停止当前 AI 语音（含 Web Audio BufferSource 与 <audio>） */
   function stopAiTtsPlayback() {
     if (voicePlaybackSource) {
       try { voicePlaybackSource.stop(0); } catch (e) {}
       voicePlaybackSource = null;
     }
     try { audioPlayer.pause(); audioPlayer.currentTime = 0; } catch (e) {}
+    if (ttsBlobUrl) {
+      try { window.URL.revokeObjectURL(ttsBlobUrl); } catch (e) {}
+      ttsBlobUrl = null;
+    }
     stopMouthSync();
   }
 
@@ -941,32 +994,58 @@
     }
     fallbackChunks = [];
 
+    stopAiTtsPlayback();
+
     var gen = ttsPlayGeneration;
-    var Ctx = window.AudioContext || window.webkitAudioContext;
-    if (Ctx) {
-      if (!audioCtx) { audioCtx = new Ctx(); }
-      audioCtx.decodeAudioData(merged.buffer.slice(0), function (decoded) {
-        if (gen !== ttsPlayGeneration) { return; }
-        stopAiTtsPlayback();
-        var src = audioCtx.createBufferSource();
-        src.buffer = decoded;
-        src.connect(audioCtx.destination);
-        voicePlaybackSource = src;
-        src.onended = function () {
-          if (voicePlaybackSource === src) { voicePlaybackSource = null; }
-          stopMouthSync();
-        };
-        src.start(0);
-        startMouthAnimation(Math.ceil(decoded.duration * 1000));
-        appendLog("INFO", "Web Audio 播放，时长 " + decoded.duration.toFixed(1) + "s");
-      }, function (err) {
-        if (gen !== ttsPlayGeneration) { return; }
-        appendLog("ERROR", "Web Audio 解码失败: " + String(err));
-        playWithFileReader(merged);
-      });
-    } else {
-      playWithFileReader(merged);
+    var blob = new Blob([merged], { type: "audio/mpeg" });
+
+    if (window.URL && window.URL.createObjectURL) {
+      ttsBlobUrl = window.URL.createObjectURL(blob);
+      audioPlayer.src = ttsBlobUrl;
+      audioPlayer.load();
+      var p = audioPlayer.play();
+      if (p && typeof p.then === "function") {
+        p.then(function () {
+          appendLog("INFO", "播放 " + totalChunks + " 分片 (" + totalLen + " bytes)");
+        })["catch"](function (err) {
+          appendLog("WARN", "<audio> 播放失败: " + String(err) + "，尝试 Web Audio");
+          playViaWebAudio(merged, gen);
+        });
+      } else {
+        appendLog("INFO", "播放 " + totalChunks + " 分片 (" + totalLen + " bytes)");
+      }
+      return;
     }
+
+    playWithFileReader(merged);
+  }
+
+  function playViaWebAudio(merged, gen) {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) { playWithFileReader(merged); return; }
+    if (!audioCtx) { audioCtx = new Ctx(); }
+    if (audioCtx.state === "suspended" && audioCtx.resume) {
+      audioCtx.resume()["catch"](function () {});
+    }
+    audioCtx.decodeAudioData(merged.buffer.slice(0), function (decoded) {
+      if (gen !== ttsPlayGeneration) { return; }
+      stopAiTtsPlayback();
+      var src = audioCtx.createBufferSource();
+      src.buffer = decoded;
+      src.connect(audioCtx.destination);
+      voicePlaybackSource = src;
+      src.onended = function () {
+        if (voicePlaybackSource === src) { voicePlaybackSource = null; }
+        stopMouthSync();
+      };
+      src.start(0);
+      startMouthAnimation(Math.ceil(decoded.duration * 1000));
+      appendLog("INFO", "Web Audio 播放 " + decoded.duration.toFixed(1) + "s");
+    }, function (err) {
+      if (gen !== ttsPlayGeneration) { return; }
+      appendLog("WARN", "Web Audio 解码失败: " + String(err) + "，尝试 FileReader");
+      playWithFileReader(merged);
+    });
   }
 
   function playWithFileReader(merged) {
@@ -975,9 +1054,12 @@
     var reader = new FileReader();
     reader.onload = function () {
       if (gen !== ttsPlayGeneration) { return; }
-      stopAiTtsPlayback();
       audioPlayer.src = reader.result;
-      playAudio();
+      audioPlayer.load();
+      audioPlayer.play()["catch"](function (err) {
+        appendLog("ERROR", "FileReader 播放也失败: " + String(err));
+      });
+      appendLog("INFO", "FileReader 播放 (" + merged.length + " bytes)");
     };
     reader.onerror = function () { appendLog("ERROR", "FileReader 音频读取失败。"); };
     reader.readAsDataURL(blob);
@@ -1042,7 +1124,7 @@
     if (t === "ASR_RESULT") {
       var asrTxt = normalizeUserAsrText(payload);
       if (asrTxt) { addMessage("user", asrTxt); }
-      if (effectText) { effectText.textContent = asrTxt ? ("语音识别：" + asrTxt) : ""; }
+      if (effectText) { effectText.textContent = asrTxt || ""; }
       return;
     }
     if (t === "MODEL_SWITCH") { loadModel(payload.model_id || "default", payload.style || ""); return; }
@@ -1237,7 +1319,7 @@
 
   if (connectBtn)    { connectBtn.onclick    = connect; }
   if (disconnectBtn) { disconnectBtn.onclick = disconnect; }
-  if (sendTextBtn)   { sendTextBtn.onclick   = sendTextCommand; }
+  if (sendTextBtn)   { sendTextBtn.onclick   = function () { unlockAudio(); sendTextCommand(); }; }
   if (sendAudioBtn)  { sendAudioBtn.onclick  = sendAudioInput; }
   if (textInput) {
     textInput.onkeydown = function (e) {
@@ -1245,12 +1327,21 @@
     };
   }
 
-  // 音频事件：口型 + 音频结束后重置 MSE，确保下一次 TTS 正常播放（修复 Issue 2）
-  audioPlayer.addEventListener("play",   startMouthSync);
-  audioPlayer.addEventListener("pause",  stopMouthSync);
-  audioPlayer.addEventListener("ended",  function () {
+  // 全局解锁：任意用户交互时解锁音频播放（iOS/Android autoplay policy）
+  document.addEventListener("touchstart", unlockAudio, { once: true, passive: true });
+  document.addEventListener("click", unlockAudio, { once: true, passive: true });
+
+  audioPlayer.addEventListener("play", function () {
+    if (audioUnlocking) { return; }
+    startMouthSync();
+  });
+  audioPlayer.addEventListener("pause", function () {
+    if (audioUnlocking) { return; }
     stopMouthSync();
-    // 延迟 200ms 重置 MSE，为下一条 AI 回复的音频准备干净的 sourceBuffer
+  });
+  audioPlayer.addEventListener("ended", function () {
+    stopMouthSync();
+    if (audioUnlocking) { audioUnlocking = false; return; }
     setTimeout(setupAudioStreaming, 200);
   });
 
@@ -1295,7 +1386,7 @@
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260406d",
+    "JS版本: v20260406j",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
