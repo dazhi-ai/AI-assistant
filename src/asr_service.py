@@ -5,11 +5,29 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import struct
 import uuid
 from urllib import error, request
 
 from src.config import Settings
+
+logger = logging.getLogger(__name__)
+
+# 火山返回里常见承载识别文本的字段名（用于深度兜底扫描）
+_VOLC_TEXT_KEYS = frozenset(
+    {
+        "text",
+        "transcript",
+        "sentence",
+        "content",
+        "src",
+        "dst",
+        "asr_text",
+        "recognition_text",
+        "recognition",
+    }
+)
 
 # 火山引擎 REST ASR 接口地址（v1 为 HTTP 同步接口，v2 为 WebSocket 流式接口）
 _VOLC_ASR_REST_URL = "https://openspeech.bytedance.com/api/v1/asr"
@@ -148,61 +166,152 @@ class ASRService:
     # 响应文本提取                                                         #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _piece_from_utterance_item(item: dict) -> str:
+        """单条 utterance / 分句对象上取文本。"""
+        if not isinstance(item, dict):
+            return ""
+        for k in ("text", "transcript", "content", "sentence", "src"):
+            v = item.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return ""
+
+    def _volc_deep_collect_text(self, obj: object, depth: int = 0) -> list[str]:
+        """在未知嵌套结构下收集疑似识别文本（限深度，避免误抓过长无关字符串）。"""
+        if depth > 12:
+            return []
+        out: list[str] = []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                kl = str(k).lower()
+                if kl in _VOLC_TEXT_KEYS and isinstance(v, str):
+                    s = v.strip()
+                    if s and len(s) <= 4096:
+                        out.append(s)
+                else:
+                    out.extend(self._volc_deep_collect_text(v, depth + 1))
+        elif isinstance(obj, list):
+            for it in obj:
+                out.extend(self._volc_deep_collect_text(it, depth + 1))
+        return out
+
     def _extract_text(self, data: dict) -> str:
         """
         从多种 ASR 响应格式中提取识别文本。
 
-        支持的格式：
-        - OpenAI:       {"text": "..."}
-        - 火山引擎 v1:  {"resp": {"utterances": [{"text": "..."}]}}
-        - 火山引擎 nbest: {"resp": {"nbest": [{"transcript": "..."}]}}
-        - 通用 fallback: {"result": {"text": "..."}} / {"utterances": [...]}
+        火山 openspeech /api/v1/asr 在不同 cluster/版本下，成功体差异较大：
+        - text / result 字符串 / payload JSON 字符串 / data 嵌套 / resp.utterances 等。
         """
-        # OpenAI 格式
+        # OpenAI
         direct_text = str(data.get("text", "")).strip()
         if direct_text:
             return direct_text
 
-        # 火山引擎 v1 REST 格式：{"resp": {...}}
+        # result 为纯字符串
+        raw_result = data.get("result")
+        if isinstance(raw_result, str) and raw_result.strip():
+            return raw_result.strip()
+        if isinstance(raw_result, list):
+            parts = [str(x).strip() for x in raw_result if str(x).strip()]
+            if parts:
+                return " ".join(parts)
+
+        # payload 常为 JSON 字符串
+        pl = data.get("payload")
+        if isinstance(pl, str) and pl.strip():
+            try:
+                inner = json.loads(pl)
+                if isinstance(inner, dict):
+                    sub = self._extract_text(inner)
+                    if sub:
+                        return sub
+            except json.JSONDecodeError:
+                if pl.strip() and not pl.strip().startswith("{"):
+                    return pl.strip()
+
+        # data 嵌套一层
+        inner_data = data.get("data")
+        if isinstance(inner_data, dict):
+            sub = self._extract_text(inner_data)
+            if sub:
+                return sub
+        if isinstance(inner_data, str) and inner_data.strip():
+            raw_s = inner_data.strip()
+            try:
+                parsed = json.loads(raw_s)
+                if isinstance(parsed, dict):
+                    sub = self._extract_text(parsed)
+                    if sub:
+                        return sub
+            except json.JSONDecodeError:
+                pass
+            try:
+                decoded = base64.b64decode(raw_s)
+                parsed = json.loads(decoded.decode("utf-8"))
+                if isinstance(parsed, dict):
+                    sub = self._extract_text(parsed)
+                    if sub:
+                        return sub
+            except Exception:
+                pass
+
+        # results / sentences / segments 等列表
+        for key in ("results", "recognition", "sentences", "segments", "utterances"):
+            arr = data.get(key)
+            if not isinstance(arr, list):
+                continue
+            pieces: list[str] = []
+            for item in arr:
+                if isinstance(item, str) and item.strip():
+                    pieces.append(item.strip())
+                elif isinstance(item, dict):
+                    p = self._piece_from_utterance_item(item)
+                    if p:
+                        pieces.append(p)
+            joined = " ".join(pieces)
+            if joined:
+                return joined
+
+        # 火山 resp 块
         resp = data.get("resp")
         if isinstance(resp, dict):
             utterances = resp.get("utterances", [])
             if isinstance(utterances, list):
-                pieces = [
-                    str(item.get("text", "")).strip()
-                    for item in utterances
-                    if isinstance(item, dict)
-                ]
+                pieces = [self._piece_from_utterance_item(u) for u in utterances if isinstance(u, dict)]
                 joined = " ".join([p for p in pieces if p])
                 if joined:
                     return joined
-            # nbest 兜底
             nbest = resp.get("nbest", [])
             if isinstance(nbest, list) and nbest:
                 first = nbest[0]
                 if isinstance(first, dict):
-                    transcript = str(first.get("transcript", "")).strip()
+                    transcript = str(first.get("transcript", "") or first.get("text", "")).strip()
                     if transcript:
                         return transcript
 
-        # 通用 {"result": {...}} 格式
-        result = data.get("result")
-        if isinstance(result, dict):
-            nested = str(result.get("text", "")).strip()
+        # result 为 dict
+        if isinstance(raw_result, dict):
+            nested = str(raw_result.get("text", "")).strip()
             if nested:
                 return nested
-            utterances = result.get("utterances", [])
+            utterances = raw_result.get("utterances", [])
             if isinstance(utterances, list):
-                pieces = [str(u.get("text", "")).strip() for u in utterances if isinstance(u, dict)]
+                pieces = [self._piece_from_utterance_item(u) for u in utterances if isinstance(u, dict)]
                 joined = " ".join([p for p in pieces if p])
                 if joined:
                     return joined
 
-        # 顶层 utterances 兜底
-        utterances = data.get("utterances", [])
-        if isinstance(utterances, list):
-            pieces = [str(u.get("text", "")).strip() for u in utterances if isinstance(u, dict)]
-            return " ".join([p for p in pieces if p]).strip()
+        # 深度兜底（去重、拼接）
+        deep = self._volc_deep_collect_text(data)
+        if deep:
+            seen: set[str] = set()
+            ordered: list[str] = []
+            for s in deep:
+                if s not in seen:
+                    seen.add(s)
+                    ordered.append(s)
+            return " ".join(ordered).strip()
 
         return ""
 
@@ -264,6 +373,12 @@ class ASRService:
 
         text = self._extract_text(data)
         if not text:
+            if self._provider == "volc":
+                try:
+                    snippet = json.dumps(data, ensure_ascii=False)[:1500]
+                except Exception:
+                    snippet = str(data)[:1500]
+                logger.warning("ASR Volc code=1000 but empty text; response snippet: %s", snippet)
             return {"ok": False, "error": "ASR returned empty text"}
         return {"ok": True, "text": text}
 
