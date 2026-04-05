@@ -5,13 +5,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import struct
 import uuid
 from urllib import error, request
 
 from src.config import Settings
-
-# 火山引擎 REST ASR（非流式）使用的 cluster 名称
-_VOLC_ASR_REST_CLUSTER = "volcengine_input_common"
 
 # 火山引擎 REST ASR 接口地址（v1 为 HTTP 同步接口，v2 为 WebSocket 流式接口）
 _VOLC_ASR_REST_URL = "https://openspeech.bytedance.com/api/v1/asr"
@@ -44,6 +42,7 @@ class ASRService:
         self._model = settings.asr_model
         self._language = settings.asr_language
         self._max_audio_bytes = settings.asr_max_audio_bytes
+        self._volc_asr_cluster = settings.volc_asr_cluster or "volcengine_input_common"
 
     @property
     def enabled(self) -> bool:
@@ -63,50 +62,50 @@ class ASRService:
     # 火山引擎 REST ASR：JSON + base64 音频体                             #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _parse_wav_ieee_pcm_meta(audio_bytes: bytes) -> tuple[int, int, int] | None:
+        """从标准 PCM WAV 头解析 (sample_rate, channels, bits_per_sample)；失败则返回 None。"""
+        if len(audio_bytes) < 44 or audio_bytes[:4] != b"RIFF" or audio_bytes[8:12] != b"WAVE":
+            return None
+        audio_format = struct.unpack_from("<H", audio_bytes, 20)[0]
+        if audio_format != 1:
+            return None
+        channels = int(struct.unpack_from("<H", audio_bytes, 22)[0])
+        rate = int(struct.unpack_from("<I", audio_bytes, 24)[0])
+        bits = int(struct.unpack_from("<H", audio_bytes, 34)[0])
+        if channels < 1 or rate <= 0 or bits <= 0:
+            return None
+        return rate, channels, bits
+
     def _build_volc_json_body(self, audio_bytes: bytes) -> bytes:
         """
         构造火山引擎 REST ASR (v1) 请求体。
 
-        接口文档格式：
-        POST https://openspeech.bytedance.com/api/v1/asr
-        Content-Type: application/json
-        Authorization: Bearer; {access_token}
-        X-Appid: {appid}
+        注意：服务端校验「app」对象；若把 appid/token/cluster 放在 JSON 顶层，会报
+        invalid type for token app, is <nil>（HTTP 400 / code 1001）。
 
-        Body:
-        {
-            "appid": "...",
-            "token": "...",
-            "cluster": "volcengine_input_common",
-            "uid": "...",
-            "audio": {
-                "format": "wav",
-                "data": "<base64>",
-                "channel": 1,
-                "bits": 16,
-                "rate": 16000,
-                "codec": "raw"
-            },
-            "request": {
-                "reqid": "<uuid>",
-                "nbest": 1,
-                "workflow": "audio_in,resample,partition,vad,fe,decode,itn,nlu_punctuation",
-                "sequence": -1
-            }
-        }
+        正确结构为 app / user / audio / request 四段（与 WebSocket v2 配置对象一致）。
         """
+        wav_meta = self._parse_wav_ieee_pcm_meta(audio_bytes)
+        if wav_meta:
+            sample_rate, channel, bits = wav_meta
+        else:
+            sample_rate, channel, bits = 16000, 1, 16
+
         audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
         payload = {
-            "appid": self._app_id,
-            "token": self._access_token,
-            "cluster": _VOLC_ASR_REST_CLUSTER,
-            "uid": "tablet_user",
+            "app": {
+                "appid": self._app_id,
+                "token": self._access_token,
+                "cluster": self._volc_asr_cluster,
+            },
+            "user": {"uid": "tablet_user"},
             "audio": {
                 "format": "wav",
                 "data": audio_b64,
-                "channel": 1,
-                "bits": 16,
-                "rate": 16000,
+                "channel": channel,
+                "bits": bits,
+                "rate": sample_rate,
                 "codec": "raw",
             },
             "request": {
@@ -254,9 +253,11 @@ class ASRService:
         except json.JSONDecodeError:
             return {"ok": False, "error": "ASR response is not valid JSON"}
 
-        # 火山引擎 v1 REST 成功码为 1000
+        # 火山引擎 v1 REST：1000 成功；1013 常见于静音/极短音频（无有效语音）
         if self._provider == "volc":
             code = data.get("code", 0)
+            if code == 1013:
+                return {"ok": False, "error": "未识别到有效语音，请靠近麦克风、说话稍长一些后重试"}
             if code != 1000:
                 msg = data.get("message", "unknown error")
                 return {"ok": False, "error": f"ASR Volcengine code {code}: {msg}"}

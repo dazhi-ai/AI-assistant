@@ -47,6 +47,7 @@ class Settings:
     volc_secret_key: str
     volc_asr_ws_url: str
     volc_tts_ws_url: str
+    volc_asr_cluster: str
     asr_provider: str
     asr_base_url: str
     asr_api_key: str
@@ -116,6 +117,8 @@ def load_settings() -> Settings:
     volc_secret_key = os.getenv("VOLC_SECRET_KEY", "")
     volc_asr_ws_url = os.getenv("VOLC_ASR_WS_URL", "wss://openspeech.bytedance.com/api/v2/asr")
     volc_tts_ws_url = os.getenv("VOLC_TTS_WS_URL", "wss://openspeech.bytedance.com/api/v3/tts/bidirection")
+    # 与 xiaozhi DoubaoStreamASR 一致；若控制台仅开通「流式」未开通「一句话」则必须用 streaming_common
+    volc_asr_cluster = os.getenv("VOLC_ASR_CLUSTER", "volcengine_streaming_common").strip()
     asr_provider_raw = os.getenv("ASR_PROVIDER", "openai").strip().lower()
     asr_provider = "volc" if asr_provider_raw in {"volcengine", "volc"} else asr_provider_raw
     asr_base_url = os.getenv("ASR_BASE_URL", "https://api.openai.com/v1/audio/transcriptions")
@@ -173,6 +176,7 @@ def load_settings() -> Settings:
         volc_secret_key=volc_secret_key,
         volc_asr_ws_url=volc_asr_ws_url,
         volc_tts_ws_url=volc_tts_ws_url,
+        volc_asr_cluster=volc_asr_cluster,
         asr_provider=asr_provider,
         asr_base_url=asr_base_url,
         asr_api_key=asr_api_key,

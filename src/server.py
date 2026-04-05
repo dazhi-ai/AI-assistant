@@ -349,10 +349,12 @@ async def handle_client(
                     continue
                 asr_result = await asr_service.transcribe(bytes(audio_input_bytes))
                 if not asr_result.get("ok"):
+                    err_msg = asr_result.get("error", "Unknown ASR error")
+                    logger.warning("ASR_FAILED trace=%s bytes=%s err=%s", message.trace_id, len(audio_input_bytes), err_msg)
                     await _send_message(
                         websocket,
                         "ERROR",
-                        {"code": "ASR_FAILED", "message": asr_result.get("error", "Unknown ASR error")},
+                        {"code": "ASR_FAILED", "message": err_msg},
                         trace_id=message.trace_id,
                     )
                     audio_input_bytes.clear()
