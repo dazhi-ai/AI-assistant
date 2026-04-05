@@ -19,6 +19,7 @@ from src.config import Settings
 from src.protocol import build_message, parse_message
 from src.tool_handler import ToolHandler
 from src.tts_service import TTSService
+from src.xiaozhi_prompt_sync import XiaozhiPromptSync
 
 
 logger = logging.getLogger(__name__)
@@ -156,12 +157,21 @@ async def _handle_user_text(
                 },
                 trace_id=trace_id,
             )
-    await _stream_tts_to_client(
-        websocket=websocket,
-        tts_service=tts_service,
-        text=process_result["assistant_text"],
-        trace_id=trace_id,
+    # 网易云播放 URL 已由客户端 <audio> 播放，跳过 TTS，避免与音乐重叠
+    skip_tts_for_music = any(
+        tr.get("name") == "play_music"
+        and isinstance(tr.get("result"), dict)
+        and tr["result"].get("ok")
+        and str(tr["result"].get("url", "")).strip()
+        for tr in process_result["tool_results"]
     )
+    if not skip_tts_for_music:
+        await _stream_tts_to_client(
+            websocket=websocket,
+            tts_service=tts_service,
+            text=process_result["assistant_text"],
+            trace_id=trace_id,
+        )
 
 
 async def handle_client(
@@ -467,11 +477,22 @@ async def start_server(settings: Settings) -> None:
         logger.warning("Weather service is disabled (missing QWEATHER_API_KEY).")
     tool_handler = ToolHandler(netease, weather)
     knowledge_store = KnowledgeStore(settings.knowledge_data_path)
+    prompt_sync = XiaozhiPromptSync(
+        host=settings.xiaozhi_mysql_host,
+        port=settings.xiaozhi_mysql_port,
+        user=settings.xiaozhi_mysql_user,
+        password=settings.xiaozhi_mysql_password,
+        db=settings.xiaozhi_mysql_db,
+        agent_id=settings.xiaozhi_agent_id,
+        refresh_seconds=settings.xiaozhi_prompt_refresh_seconds,
+    )
+    await prompt_sync.start()
     assistant = AssistantService(
         ark_client=ArkClient(settings),
         tool_handler=tool_handler,
         knowledge_store=knowledge_store,
         knowledge_context_max_chars=settings.knowledge_context_max_chars,
+        prompt_sync=prompt_sync,
     )
     tts_service = TTSService(settings)
     asr_service = ASRService(settings)

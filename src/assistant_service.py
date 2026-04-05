@@ -10,6 +10,7 @@ from typing import Any
 from src.ark_client import ArkClient
 from src.knowledge_store import KnowledgeStore
 from src.tool_handler import ToolHandler
+from src.xiaozhi_prompt_sync import XiaozhiPromptSync
 
 
 @dataclass
@@ -23,6 +24,15 @@ class PendingSongSelection:
 class AssistantService:
     """Coordinate model reasoning and plugin tool execution."""
 
+    # 工具使用指引，追加在角色 prompt 之后
+    _TOOL_INSTRUCTIONS = (
+        "请在需要时通过工具函数控制网易云音乐。"
+        "对于“好听”优先调用 like_music；对于“收藏”优先调用 favorite_music。"
+        "对于天气类问题调用 get_weather_forecast 并传 city。"
+        "如果用户在问几点几分下雨、未来一小时会不会下雨、雨什么时候停、要不要带伞、"
+        "今晚/明早/下午会不会下雨等问题，也调用 get_weather_forecast，并把原始时间诉求放进 time_query。"
+    )
+
     def __init__(
         self,
         ark_client: ArkClient,
@@ -30,16 +40,31 @@ class AssistantService:
         *,
         knowledge_store: KnowledgeStore | None = None,
         knowledge_context_max_chars: int = 6000,
+        prompt_sync: XiaozhiPromptSync | None = None,
     ) -> None:
         self._ark_client = ark_client
         self._tool_handler = tool_handler
         self._knowledge_store = knowledge_store
         self._knowledge_context_max_chars = knowledge_context_max_chars
+        self._prompt_sync = prompt_sync
         self._pending_song_selection: dict[str, PendingSongSelection] = {}
 
     def clear_session(self, session_id: str) -> None:
         """Clear all temporary conversation state for one websocket session."""
         self._pending_song_selection.pop(session_id, None)
+
+    def _build_system_prompt(self) -> str:
+        """小智 MySQL 角色 prompt（含新闻）+ 工具指引 + 可选知识库。"""
+        role = ""
+        if self._prompt_sync is not None and self._prompt_sync.enabled:
+            role = self._prompt_sync.prompt.strip()
+        if not role:
+            role = "你是AI助手。"
+        base = f"{role}\n\n{self._TOOL_INSTRUCTIONS}"
+        if self._knowledge_store is None:
+            return base
+        kb_block = self._knowledge_store.build_context_block(self._knowledge_context_max_chars)
+        return f"{base}\n\n{kb_block}" if kb_block else base
 
     def _extract_selection_index(self, user_text: str, max_count: int) -> int | None:
         """Extract human choice like '第2首' or '选三' into zero-based index."""
@@ -258,18 +283,7 @@ class AssistantService:
             return pending_result
 
         if self._ark_client.enabled:
-            base_system = (
-                "你是AI助手。请在需要时通过工具函数控制网易云音乐。"
-                "对于“好听”优先调用 like_music；对于“收藏”优先调用 favorite_music。"
-                "对于天气类问题调用 get_weather_forecast 并传 city。"
-                "如果用户在问几点几分下雨、未来一小时会不会下雨、雨什么时候停、要不要带伞、"
-                "今晚/明早/下午会不会下雨等问题，也调用 get_weather_forecast，并把原始时间诉求放进 time_query。"
-            )
-            kb_block = ""
-            if self._knowledge_store is not None:
-                kb_block = self._knowledge_store.build_context_block(self._knowledge_context_max_chars)
-            system_prompt = f"{base_system}\n\n{kb_block}" if kb_block else base_system
-
+            system_prompt = self._build_system_prompt()
             model_output = self._ark_client.chat_with_tools(
                 user_text=user_text,
                 tools=self._tool_handler.tool_schemas(),

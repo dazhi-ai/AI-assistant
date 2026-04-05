@@ -65,6 +65,14 @@ class Settings:
     knowledge_context_max_chars: int
     # 小智镜像桥接：xiaozhi-esp32-server 用此 token 以 MIRROR_INIT 连入，将 AI 回复推送给平板
     mirror_token: str
+    # 小智 MySQL 同步角色 prompt（含每日新闻）
+    xiaozhi_mysql_host: str
+    xiaozhi_mysql_port: int
+    xiaozhi_mysql_user: str
+    xiaozhi_mysql_password: str
+    xiaozhi_mysql_db: str
+    xiaozhi_agent_id: str
+    xiaozhi_prompt_refresh_seconds: int
 
 
 def _to_bool(value: str) -> bool:
@@ -138,6 +146,13 @@ def load_settings() -> Settings:
     knowledge_data_path = os.getenv("KNOWLEDGE_DATA_PATH", "data/knowledge_base.jsonl").strip()
     knowledge_context_max_chars = int(os.getenv("KNOWLEDGE_CONTEXT_MAX_CHARS", "6000"))
     mirror_token = os.getenv("MIRROR_TOKEN", "").strip()
+    xiaozhi_mysql_host = os.getenv("XIAOZHI_MYSQL_HOST", "172.19.0.2").strip()
+    xiaozhi_mysql_port = int(os.getenv("XIAOZHI_MYSQL_PORT", "3306"))
+    xiaozhi_mysql_user = os.getenv("XIAOZHI_MYSQL_USER", "root").strip()
+    xiaozhi_mysql_password = os.getenv("XIAOZHI_MYSQL_PASSWORD", "").strip()
+    xiaozhi_mysql_db = os.getenv("XIAOZHI_MYSQL_DB", "xiaozhi_esp32_server").strip()
+    xiaozhi_agent_id = os.getenv("XIAOZHI_AGENT_ID", "").strip()
+    xiaozhi_prompt_refresh_seconds = int(os.getenv("XIAOZHI_PROMPT_REFRESH_SECONDS", "600"))
     return Settings(
         host=host,
         port=port,
@@ -192,6 +207,13 @@ def load_settings() -> Settings:
         knowledge_data_path=knowledge_data_path,
         knowledge_context_max_chars=knowledge_context_max_chars,
         mirror_token=mirror_token,
+        xiaozhi_mysql_host=xiaozhi_mysql_host,
+        xiaozhi_mysql_port=xiaozhi_mysql_port,
+        xiaozhi_mysql_user=xiaozhi_mysql_user,
+        xiaozhi_mysql_password=xiaozhi_mysql_password,
+        xiaozhi_mysql_db=xiaozhi_mysql_db,
+        xiaozhi_agent_id=xiaozhi_agent_id,
+        xiaozhi_prompt_refresh_seconds=xiaozhi_prompt_refresh_seconds,
     )
 
 
