@@ -100,6 +100,22 @@
     }
   }
 
+  /**
+   * 根据当前页面地址推导 WebSocket URL（走 nginx 的 /ws 反代）。
+   * 从 https 页面连接 ws:// 会被浏览器按「混合内容」拦截，Safari/iPad 会一直停在「连接中」。
+   */
+  function defaultWsUrlFromPage() {
+    var p = window.location.protocol;
+    var h = window.location.host;
+    if (p === "https:") {
+      return "wss://" + h + "/ws";
+    }
+    if (p === "http:") {
+      return "ws://" + h + "/ws";
+    }
+    return "ws://" + (window.location.hostname || "127.0.0.1") + ":8765";
+  }
+
   function safeSend(type, payload, customTraceId) {
     if (!socket || socket.readyState !== 1) {
       appendLog("WARN", "当前未连接，消息未发送: " + type);
@@ -418,6 +434,11 @@
 
   // 通过 AUDIO_INPUT_CHUNK + AUDIO_INPUT_END 发送 WAV 到服务器 ASR
   function sendVoiceWav(bytes) {
+    if (!socket || socket.readyState !== 1) {
+      addMessage("system", "未连接到服务器，语音未发送。请等顶部圆点变绿（已连接）后再试。");
+      appendLog("WARN", "语音未发送：WebSocket 未连接");
+      return;
+    }
     var chunkSize = 32 * 1024;
     var total = Math.ceil(bytes.length / chunkSize);
     var trace = traceId("voice");
@@ -815,11 +836,17 @@
     };
 
     socket.onmessage = onMessage;
-    socket.onerror = function () { appendLog("ERROR", "WebSocket 发生错误"); };
-    socket.onclose = function () {
+    socket.onerror = function () {
+      appendLog("ERROR", "WebSocket 发生错误（若页面是 https，地址须为 wss://当前域名/ws，不能填 ws://:8765）");
+    };
+    socket.onclose = function (ev) {
       isConnected = false;
       setStatus("已断开", "disconnected");
-      appendLog("INFO", "WebSocket 连接关闭");
+      var closeInfo = "WebSocket 连接关闭";
+      if (ev && typeof ev.code === "number") {
+        closeInfo += " code=" + ev.code + (ev.reason ? " reason=" + ev.reason : "");
+      }
+      appendLog("INFO", closeInfo);
       if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
       if (userRequestedDisconnect) { userRequestedDisconnect = false; return; }
       if (reconnectTimer) { clearTimeout(reconnectTimer); }
@@ -1004,12 +1031,11 @@
     };
   }
 
-  var autoHostname = window.location.hostname || "192.168.1.6";
-  var autoWsUrl = "ws://" + autoHostname + ":8765";
+  var autoWsUrl = defaultWsUrlFromPage();
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260406a",
+    "JS版本: v20260406b",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
