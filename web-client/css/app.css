@@ -400,6 +400,9 @@ html, body {
   color: #c0cad8;
   font-size: 20px;
   cursor: pointer;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
   display: -webkit-box;
   display: -webkit-flex;
   display: flex;
