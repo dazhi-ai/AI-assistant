@@ -55,11 +55,18 @@
 
     </div>
 
-    <!-- ===== 底部固定输入栏 ===== -->
-    <div class="bottom-bar">
-      <button id="voiceBtn" class="btn-voice" type="button" title="语音输入">&#127908;</button>
-      <input id="textInput" class="chat-input" type="text" placeholder="向 AI 说点什么..." />
-      <button id="sendTextBtn" class="send-btn" type="button">发送</button>
+    <!-- ===== 底部输入栏（微信式：默认语音「按住说话」，可切换键盘文字） ===== -->
+    <div id="bottomBar" class="bottom-bar bottom-bar--voice">
+      <button type="button" id="inputModeToggle" class="input-mode-toggle" title="切换到文字输入">&#9000;</button>
+      <div class="input-panel-wrap">
+        <div id="voiceInputPanel" class="input-panel voice-input-panel">
+          <button type="button" id="voiceBtn" class="btn-voice-hold" title="按住说话，松开发送">按住 说话</button>
+        </div>
+        <div id="textInputPanel" class="input-panel text-input-panel hidden">
+          <input id="textInput" class="chat-input" type="text" placeholder="输入消息..." />
+          <button id="sendTextBtn" class="send-btn" type="button">发送</button>
+        </div>
+      </div>
     </div>
 
     <!-- ===== 设置全屏面板 ===== -->
@@ -113,6 +120,6 @@
     <!-- live2d-widget 本地文件，无 CDN 依赖 -->
     <script src="./js/L2Dwidget.min.js"
             onerror="document.getElementById('logBox').textContent+='[ERR] L2Dwidget.min.js 加载失败\n'"></script>
-    <script src="./js/app.js?v=20260406c"></script>
+    <script src="./js/app.js?v=20260406d"></script>
   </body>
 </html>

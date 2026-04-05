@@ -31,6 +31,10 @@
   var settingsPanel  = document.getElementById("settingsPanel");
   var settingsCloseBtn = document.getElementById("settingsCloseBtn");
   var voiceBtn       = document.getElementById("voiceBtn");
+  var bottomBar      = document.getElementById("bottomBar");
+  var inputModeToggle = document.getElementById("inputModeToggle");
+  var voiceInputPanel = document.getElementById("voiceInputPanel");
+  var textInputPanel  = document.getElementById("textInputPanel");
   // 天气 overlay
   var weatherOverlay = document.getElementById("weatherOverlay");
   var weatherCity    = document.getElementById("weatherCity");
@@ -45,6 +49,8 @@
   var pingTimer = null;
   var live2dLoaded = false;
   var audioCtx = null;
+  var voicePlaybackSource = null; // 当前 Web Audio 播放的 AI 语音，用于在新 TTS 到来时 stop
+  var ttsPlayGeneration = 0;      // 新 TTS 开始时递增，丢弃过期的 decodeAudioData 回调
   var mouthRaf = null;
   var mediaSource = null;
   var mediaSourceUrl = null;
@@ -138,6 +144,33 @@
   // ============================================================
 
   /**
+   * 从 ASR 结果中只取「识别文本」，忽略 confidence、JSON 整包等（聊天区不展示调试字段）
+   */
+  function normalizeUserAsrText(payload) {
+    var raw = payload && payload.text;
+    if (raw == null) { return ""; }
+    if (typeof raw === "object") {
+      if (typeof raw.text === "string") { return String(raw.text).trim(); }
+      if (typeof raw.transcript === "string") { return String(raw.transcript).trim(); }
+      return "";
+    }
+    var s = String(raw).trim();
+    if (!s) { return ""; }
+    var c0 = s.charAt(0);
+    if ((c0 === "{" && s.indexOf("}") > 0) || (c0 === "[" && s.indexOf("]") > 0)) {
+      try {
+        var o = JSON.parse(s);
+        if (typeof o === "string") { return o.trim(); }
+        if (o && typeof o.text === "string") { return String(o.text).trim(); }
+        if (o && typeof o.transcript === "string") { return String(o.transcript).trim(); }
+        if (o && typeof o.result === "string") { return String(o.result).trim(); }
+        if (Array.isArray(o) && o[0] && typeof o[0].text === "string") { return String(o[0].text).trim(); }
+      } catch (e) { /* 非 JSON，当普通字符串 */ }
+    }
+    return s;
+  }
+
+  /**
    * 添加一条消息气泡到聊天历史
    * @param {string} role  "user" | "ai" | "xiaozhi" | "system"
    * @param {string} text  消息内容
@@ -207,6 +240,52 @@
 
   if (settingsBtn)      { settingsBtn.onclick      = openSettings; }
   if (settingsCloseBtn) { settingsCloseBtn.onclick = closeSettings; }
+
+  // ============================================================
+  // 底部输入：默认语音（微信式），可切换键盘文字
+  // ============================================================
+
+  var inputModeVoicePrimary = true;
+
+  function syncAppBodyBottom() {
+    var body = document.querySelector(".app-body");
+    if (!bottomBar || !body) { return; }
+    body.style.bottom = Math.ceil(bottomBar.getBoundingClientRect().height) + "px";
+  }
+
+  function applyInputMode(voicePrimary) {
+    inputModeVoicePrimary = !!voicePrimary;
+    try { localStorage.setItem("pad_input_voice_primary", inputModeVoicePrimary ? "1" : "0"); } catch (e) {}
+    if (!voiceInputPanel || !textInputPanel || !bottomBar || !inputModeToggle) { return; }
+    if (inputModeVoicePrimary) {
+      voiceInputPanel.className = "input-panel voice-input-panel";
+      textInputPanel.className = "input-panel text-input-panel hidden";
+      bottomBar.className = "bottom-bar bottom-bar--voice";
+      inputModeToggle.innerHTML = "&#9000;";
+      inputModeToggle.setAttribute("title", "切换到文字输入");
+    } else {
+      voiceInputPanel.className = "input-panel voice-input-panel hidden";
+      textInputPanel.className = "input-panel text-input-panel";
+      bottomBar.className = "bottom-bar bottom-bar--text";
+      inputModeToggle.innerHTML = "&#127908;";
+      inputModeToggle.setAttribute("title", "切换到语音输入");
+      if (textInput) {
+        try { textInput.focus(); } catch (e) {}
+      }
+    }
+    setTimeout(syncAppBodyBottom, 0);
+  }
+
+  try {
+    var savedMode = localStorage.getItem("pad_input_voice_primary");
+    if (savedMode === "0") { inputModeVoicePrimary = false; }
+  } catch (e) {}
+
+  if (inputModeToggle) {
+    inputModeToggle.addEventListener("click", function () {
+      applyInputMode(!inputModeVoicePrimary);
+    });
+  }
 
   // ============================================================
   // 语音输入（getUserMedia + WAV）
@@ -342,7 +421,7 @@
       voiceMediaRecorder.start(120);
       isRecording = true;
       voiceGumPending = false;
-      if (voiceBtn) { voiceBtn.className = "btn-voice recording"; }
+      if (voiceBtn) { voiceBtn.className = "btn-voice-hold recording"; }
       addMessage("system", "正在录音：松手结束并发送（若已松手授权麦克风，请再点一下麦克风结束）");
       appendLog("INFO", "MediaRecorder 录音 mime=" + (mime || "default"));
     } catch (e7) {
@@ -426,7 +505,7 @@
         kickResume();
         setTimeout(kickResume, 0);
 
-        if (voiceBtn) { voiceBtn.className = "btn-voice recording"; }
+        if (voiceBtn) { voiceBtn.className = "btn-voice-hold recording"; }
         addMessage("system", "录音中，松手即可发送");
         appendLog("INFO", "ScriptProcessor 录音 采样率=" + voiceSampleRate);
       } catch (spErr) {
@@ -483,7 +562,7 @@
     // MediaRecorder 路径：stop 在 onstop 里异步编码发送
     if (voiceMediaRecorder && voiceMediaRecorder.state === "recording") {
       isRecording = false;
-      if (voiceBtn) { voiceBtn.className = "btn-voice"; }
+      if (voiceBtn) { voiceBtn.className = "btn-voice-hold"; }
       try {
         voiceMediaRecorder.stop();
       } catch (e14) {}
@@ -496,7 +575,7 @@
     isRecording = false;
     voiceCaptureKind = "";
 
-    if (voiceBtn) { voiceBtn.className = "btn-voice"; }
+    if (voiceBtn) { voiceBtn.className = "btn-voice-hold"; }
 
     if (voiceScriptNode) { voiceScriptNode.disconnect(); voiceScriptNode = null; }
     if (voiceMuteGain) { try { voiceMuteGain.disconnect(); } catch (e15) {} voiceMuteGain = null; }
@@ -590,7 +669,7 @@
   function initVoiceInput() {
     if (!voiceBtn) { return; }
 
-    voiceBtn.title = "按住说话，或点一次开始再点一次结束";
+    voiceBtn.title = "按住说话，松开发送（iPad 可先松手授权麦克风，再点一次结束）";
 
     function voicePointerDown(e) {
       e.preventDefault();
@@ -722,9 +801,21 @@
     }
   }
 
+  /** 停止当前 AI 语音（含 Web Audio BufferSource 与 <audio>） */
+  function stopAiTtsPlayback() {
+    if (voicePlaybackSource) {
+      try { voicePlaybackSource.stop(0); } catch (e) {}
+      voicePlaybackSource = null;
+    }
+    try { audioPlayer.pause(); audioPlayer.currentTime = 0; } catch (e) {}
+    stopMouthSync();
+  }
+
   function renderAudio(payload) {
     var url = payload.url || "";
     if (!url) { return; }
+    ttsPlayGeneration += 1;
+    stopAiTtsPlayback();
     audioPlayer.src = url;
     if (audioText) { audioText.textContent = "播放地址：" + url; }
     playAudio();
@@ -810,15 +901,13 @@
     var chunk = payload.chunk_base64 || "";
     if (!chunk) { return; }
 
-    // 收到新音频第一个分片时，立即停止当前正在播放的旧音频
+    // 收到新音频第一个分片时，立即停止上一条 TTS（含 Web Audio 解码播放）
     var chunkIndex = typeof payload.chunk_index === "number" ? payload.chunk_index : 0;
     if (chunkIndex === 0) {
-      try { audioPlayer.pause(); audioPlayer.currentTime = 0; } catch (e) {}
-      stopMouthSync();
-      // 清空旧数据队列
+      ttsPlayGeneration += 1;
+      stopAiTtsPlayback();
       fallbackChunks = [];
       sourceQueue = [];
-      // 强制使用 fallback 路径（AudioContext），避免 MSE 跨会话状态污染
       useMse = false;
       appendLog("INFO", "新音频到来，已中断旧播放");
     }
@@ -836,7 +925,6 @@
     var totalChunks = payload.total_chunks || 0;
     if (audioText) { audioText.textContent = "收到分片：" + totalChunks; }
     if (useMse) {
-      // MSE 模式：重置 currentTime 到最新数据起始点，然后播放
       try { audioPlayer.currentTime = 0; } catch (e) {}
       playAudio();
       return;
@@ -853,18 +941,26 @@
     }
     fallbackChunks = [];
 
+    var gen = ttsPlayGeneration;
     var Ctx = window.AudioContext || window.webkitAudioContext;
     if (Ctx) {
       if (!audioCtx) { audioCtx = new Ctx(); }
       audioCtx.decodeAudioData(merged.buffer.slice(0), function (decoded) {
+        if (gen !== ttsPlayGeneration) { return; }
+        stopAiTtsPlayback();
         var src = audioCtx.createBufferSource();
         src.buffer = decoded;
         src.connect(audioCtx.destination);
-        src.onended = stopMouthSync;
+        voicePlaybackSource = src;
+        src.onended = function () {
+          if (voicePlaybackSource === src) { voicePlaybackSource = null; }
+          stopMouthSync();
+        };
         src.start(0);
         startMouthAnimation(Math.ceil(decoded.duration * 1000));
         appendLog("INFO", "Web Audio 播放，时长 " + decoded.duration.toFixed(1) + "s");
       }, function (err) {
+        if (gen !== ttsPlayGeneration) { return; }
         appendLog("ERROR", "Web Audio 解码失败: " + String(err));
         playWithFileReader(merged);
       });
@@ -874,9 +970,15 @@
   }
 
   function playWithFileReader(merged) {
+    var gen = ttsPlayGeneration;
     var blob = new Blob([merged], { type: "audio/mpeg" });
     var reader = new FileReader();
-    reader.onload = function () { audioPlayer.src = reader.result; playAudio(); };
+    reader.onload = function () {
+      if (gen !== ttsPlayGeneration) { return; }
+      stopAiTtsPlayback();
+      audioPlayer.src = reader.result;
+      playAudio();
+    };
     reader.onerror = function () { appendLog("ERROR", "FileReader 音频读取失败。"); };
     reader.readAsDataURL(blob);
   }
@@ -888,10 +990,15 @@
   function onMessage(raw) {
     var data = null;
     try { data = JSON.parse(raw.data); } catch (e) { appendLog("RECV_RAW", raw.data); return; }
-    appendLog("RECV " + data.type, data);
 
     var t = String(data.type || "").toUpperCase();
     var payload = data.payload || {};
+
+    if (t === "ASR_RESULT") {
+      appendLog("RECV ASR_RESULT", normalizeUserAsrText(payload) || "(空)");
+    } else {
+      appendLog("RECV " + t, data);
+    }
 
     // 认证响应
     if (t === "AUTH_OK") {
@@ -933,9 +1040,9 @@
     if (t === "AUDIO_END") { onAudioEnd(payload); return; }
     if (t === "WEATHER_CARD") { renderWeatherOverlay(payload); return; }
     if (t === "ASR_RESULT") {
-      var asrTxt = payload.text || "";
+      var asrTxt = normalizeUserAsrText(payload);
       if (asrTxt) { addMessage("user", asrTxt); }
-      if (effectText) { effectText.textContent = "语音识别：" + asrTxt; }
+      if (effectText) { effectText.textContent = asrTxt ? ("语音识别：" + asrTxt) : ""; }
       return;
     }
     if (t === "MODEL_SWITCH") { loadModel(payload.model_id || "default", payload.style || ""); return; }
@@ -1188,7 +1295,7 @@
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260406c",
+    "JS版本: v20260406d",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
@@ -1198,9 +1305,13 @@
     "UA: " + navigator.userAgent.slice(0, 60)
   ].join(" | "));
 
+  applyInputMode(inputModeVoicePrimary);
   initVoiceInput();
   initLive2D();
   loadModel("default", "默认");
+
+  window.addEventListener("resize", syncAppBodyBottom);
+  setTimeout(syncAppBodyBottom, 200);
 
   setTimeout(function () {
     appendLog("INFO", "自动连接: " + autoWsUrl);
