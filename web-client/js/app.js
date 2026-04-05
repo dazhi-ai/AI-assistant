@@ -55,6 +55,9 @@
   var userRequestedDisconnect = false;
   var isRecording = false;
   var recognition = null;
+  // 语音：iPad/iOS Safari 上 getUserMedia 为异步，需与「用户手势」配合的状态位
+  var voiceGumPending = false;           // 是否正在等待麦克风授权/流就绪
+  var voiceAbortedBeforeStream = false;  // 用户在流到达前已松手，丢弃后续流
 
   var MODEL_URLS = {
     "default": "./assets/models/shizuku/shizuku.model.json",
@@ -188,28 +191,79 @@
   if (settingsCloseBtn) { settingsCloseBtn.onclick = closeSettings; }
 
   // ============================================================
-  // 语音输入（getUserMedia + WAV 编码，兼容 Android 4.4+）
+  // 语音输入（getUserMedia + WAV 编码）
+  // 兼容：Android 4.4+、iPad / iPhone Safari（须 HTTPS，如 https://host:8443）
+  // iPad/iOS：AudioContext 必须在用户触摸的同步阶段创建并 resume，不能在 getUserMedia 的 then 里才 new
   // 交互：按住说话，松开发送
   // ============================================================
 
   var voiceMediaStream  = null;  // 麦克风流
   var voiceAudioCtx     = null;  // 录音用 AudioContext（与播放分开）
   var voiceScriptNode   = null;  // ScriptProcessorNode 采集 PCM
+  var voiceMuteGain     = null;  // 增益 0，避免麦克风接到扬声器产生啸叫（iOS 上更稳）
   var voiceBuffers      = [];    // Float32Array 片段列表
   var voiceSampleRate   = 44100; // 实际采样率，从 AudioContext 读取
 
   function startVoiceRecord() {
-    if (isRecording) { return; } // 防止重复触发
+    if (isRecording) { return; }
+    if (voiceGumPending) { return; }
 
-    // 麦克风流就绪后的处理：创建 AudioContext，开始 PCM 采集
-    function onStream(stream) {
-      voiceMediaStream = stream;
-      var Ctx = window.AudioContext || window.webkitAudioContext;
+    voiceGumPending = true;
+    voiceAbortedBeforeStream = false;
+
+    // ---------- iPad / iOS Safari：同步阶段创建 AudioContext 并尝试 resume ----------
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) {
+      voiceGumPending = false;
+      addMessage("system", "当前浏览器不支持 Web Audio，无法在 iPad 上录音");
+      appendLog("WARN", "AudioContext 不可用");
+      return;
+    }
+    try {
+      if (voiceAudioCtx) {
+        try { voiceAudioCtx.close(); } catch (e0) {}
+        voiceAudioCtx = null;
+      }
       voiceAudioCtx = new Ctx();
       voiceSampleRate = voiceAudioCtx.sampleRate;
+      if (voiceAudioCtx.state === "suspended" && voiceAudioCtx.resume) {
+        voiceAudioCtx.resume();
+      }
+    } catch (e1) {
+      voiceGumPending = false;
+      appendLog("WARN", "AudioContext 创建失败: " + String(e1));
+      addMessage("system", "无法初始化录音环境，请刷新页面后重试");
+      return;
+    }
+
+    // 麦克风流就绪后的处理：复用上面已创建的 AudioContext
+    function onStream(stream) {
+      voiceGumPending = false;
+      if (voiceAbortedBeforeStream) {
+        voiceAbortedBeforeStream = false;
+        try {
+          var tr0 = stream.getTracks();
+          var j;
+          for (j = 0; j < tr0.length; j += 1) { tr0[j].stop(); }
+        } catch (e2) {}
+        try {
+          if (voiceAudioCtx) { voiceAudioCtx.close(); }
+        } catch (e3) {}
+        voiceAudioCtx = null;
+        appendLog("INFO", "已取消录音（授权前松手）");
+        return;
+      }
+
+      voiceMediaStream = stream;
+      if (!voiceAudioCtx) {
+        appendLog("WARN", "AudioContext 丢失");
+        return;
+      }
 
       var source = voiceAudioCtx.createMediaStreamSource(stream);
       voiceScriptNode = voiceAudioCtx.createScriptProcessor(4096, 1, 1);
+      voiceMuteGain = voiceAudioCtx.createGain();
+      voiceMuteGain.gain.value = 0;
       voiceBuffers = [];
       isRecording = true;
 
@@ -222,21 +276,38 @@
       };
 
       source.connect(voiceScriptNode);
-      voiceScriptNode.connect(voiceAudioCtx.destination);
+      voiceScriptNode.connect(voiceMuteGain);
+      voiceMuteGain.connect(voiceAudioCtx.destination);
+
+      // 异步回调后再次 resume（iOS 上常见仍为 suspended）
+      function kickResume() {
+        if (voiceAudioCtx && voiceAudioCtx.state === "suspended" && voiceAudioCtx.resume) {
+          voiceAudioCtx.resume().catch(function () {});
+        }
+      }
+      kickResume();
+      setTimeout(kickResume, 0);
 
       if (voiceBtn) { voiceBtn.className = "btn-voice recording"; }
       appendLog("INFO", "录音中... 采样率: " + voiceSampleRate);
     }
 
-    // 麦克风权限被拒绝或出错时的处理
     function onError(err) {
+      voiceGumPending = false;
+      voiceAbortedBeforeStream = false;
+      try {
+        if (voiceAudioCtx) { voiceAudioCtx.close(); }
+      } catch (e4) {}
+      voiceAudioCtx = null;
       appendLog("WARN", "麦克风错误: " + String(err));
-      addMessage("system", "无法访问麦克风，请在浏览器地址栏允许麦克风权限后重试");
+      addMessage("system", "无法访问麦克风：请用 https 打开页面，并在 Safari 设置中允许该网站使用麦克风");
     }
 
-    // 优先使用现代 Promise API（Chrome 47+、小米/华为/OPPO 等内置浏览器）
+    var audioConstraints = { audio: true, video: false };
+
+    // 优先使用现代 Promise API（iPad Safari、Chrome、小米浏览器等）
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      navigator.mediaDevices.getUserMedia(audioConstraints)
         .then(onStream)
         .catch(onError);
       return;
@@ -248,22 +319,34 @@
               navigator.mozGetUserMedia    || null;
 
     if (!gum) {
-      addMessage("system", "当前浏览器不支持麦克风录音，建议改用 Chrome 浏览器");
+      voiceGumPending = false;
+      try {
+        if (voiceAudioCtx) { voiceAudioCtx.close(); }
+      } catch (e5) {}
+      voiceAudioCtx = null;
+      addMessage("system", "当前浏览器不支持麦克风录音，iPad 请使用 Safari 并访问 https 地址");
       appendLog("WARN", "getUserMedia / mediaDevices 均不可用");
       return;
     }
 
-    gum.call(navigator, { audio: true, video: false }, onStream, onError);
+    gum.call(navigator, audioConstraints, onStream, onError);
   }
 
   function stopVoiceRecord() {
-    if (!isRecording) { return; }
+    if (!isRecording) {
+      // 用户可能在系统弹窗出现前就松手：标记放弃，待流到达后关闭
+      if (voiceGumPending) {
+        voiceAbortedBeforeStream = true;
+      }
+      return;
+    }
     isRecording = false;
 
     if (voiceBtn) { voiceBtn.className = "btn-voice"; }
 
     // 断开采集节点
     if (voiceScriptNode) { voiceScriptNode.disconnect(); voiceScriptNode = null; }
+    if (voiceMuteGain) { try { voiceMuteGain.disconnect(); } catch (e6) {} voiceMuteGain = null; }
     if (voiceMediaStream) {
       var tracks = voiceMediaStream.getTracks();
       var ti;
@@ -358,18 +441,19 @@
     voiceBtn.title = "按住说话";
 
     // === 触摸事件（移动端/平板主要方式）===
+    // passive: false 才能在 iOS Safari 上 preventDefault，避免滚动抢走手势
     voiceBtn.addEventListener("touchstart", function (e) {
-      e.preventDefault(); // 防止触发 click 和页面滚动
+      e.preventDefault();
       startVoiceRecord();
-    });
+    }, { passive: false });
     voiceBtn.addEventListener("touchend", function (e) {
       e.preventDefault();
       stopVoiceRecord();
-    });
+    }, { passive: false });
     voiceBtn.addEventListener("touchcancel", function (e) {
       e.preventDefault();
       stopVoiceRecord();
-    });
+    }, { passive: false });
 
     // === 鼠标事件（PC 调试用）===
     voiceBtn.addEventListener("mousedown", startVoiceRecord);
@@ -925,7 +1009,7 @@
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260405e",
+    "JS版本: v20260406a",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
