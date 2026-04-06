@@ -24,6 +24,10 @@ services/xiaozhi-esp32-server/
 services/NeteaseCloudMusicApi/
 services/netease-api-enhanced/
 
+# 本地一次性调试脚本（勿提交）
+test_ark.py
+test_mysql_conn.py
+
 # OS generated files
 Thumbs.db
 
