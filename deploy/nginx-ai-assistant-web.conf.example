@@ -1,0 +1,59 @@
+# 示例：宝塔/自定义 vhost 可参考此文件。
+# 要点：对 index.html 单独 no-store，减少 iOS Safari 长期缓存损坏导致「仅无痕能打开」。
+
+server {
+    listen 8080;
+    root /opt/ai-assistant/web-client;
+    index index.html;
+
+    location = /index.html {
+        add_header Cache-Control "no-store, max-age=0, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+
+    location /ws {
+        proxy_pass http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+    }
+}
+
+server {
+    listen 8443 ssl;
+    root /opt/ai-assistant/web-client;
+    index index.html;
+
+    ssl_certificate     /www/server/nginx/conf/ssl/ai-assistant.crt;
+    ssl_certificate_key /www/server/nginx/conf/ssl/ai-assistant.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    location = /index.html {
+        add_header Cache-Control "no-store, max-age=0, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+
+    location /ws {
+        proxy_pass http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+    }
+}

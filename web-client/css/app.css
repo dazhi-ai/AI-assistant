@@ -192,6 +192,35 @@ html, body {
   white-space: nowrap;
 }
 
+/* iPhone 等窄屏 Safari：天气卡片约缩小 20%，减少被 Live2D 人物遮挡（iPhone 13 逻辑宽约 390） */
+@media screen and (max-width: 428px) {
+  .weather-overlay {
+    top: 6px;
+    left: 6px;
+    max-width: 176px; /* 220 × 0.8 */
+    padding: 6px 10px; /* 约 8px 12px × 0.8 */
+    border-radius: 10px; /* 12 × 0.8 */
+  }
+
+  .weather-city-name {
+    font-size: 18px; /* 22 × 0.82，约缩小 20% */
+    margin-bottom: 5px;
+  }
+
+  .weather-day-row {
+    margin-bottom: 4px;
+  }
+
+  .weather-day-label {
+    font-size: 18px;
+    width: 42px; /* 52 × 0.8 */
+  }
+
+  .weather-day-info {
+    font-size: 18px;
+  }
+}
+
 /* ===== 口型能量条 ===== */
 .mouth-track {
   height: 3px;

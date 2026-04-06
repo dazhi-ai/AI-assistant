@@ -3,11 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+    <!-- 提示 Safari 勿长期磁盘缓存首页，减轻「普通模式打不开、无痕正常」（仍建议定期清理网站数据） -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+    <meta http-equiv="Pragma" content="no-cache" />
     <!-- iPad/iPhone Safari：全屏 Web App 时减少顶部工具栏干扰（可选） -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>AI 助手</title>
     <link rel="stylesheet" href="./css/common.css" />
-    <link rel="stylesheet" href="./css/app.css" />
+    <link rel="stylesheet" href="./css/app.css?v=20260406n" />
   </head>
   <body>
 
@@ -120,6 +123,6 @@
     <!-- live2d-widget 本地文件，无 CDN 依赖 -->
     <script src="./js/L2Dwidget.min.js"
             onerror="document.getElementById('logBox').textContent+='[ERR] L2Dwidget.min.js 加载失败\n'"></script>
-    <script src="./js/app.js?v=20260406j"></script>
+    <script src="./js/app.js?v=20260406m"></script>
   </body>
 </html>

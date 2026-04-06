@@ -28,6 +28,8 @@ class AssistantService:
     _TOOL_INSTRUCTIONS = (
         "请在需要时通过工具函数控制网易云音乐。"
         "对于“好听”优先调用 like_music；对于“收藏”优先调用 favorite_music。"
+        "用户每次要求播放歌曲（含换一首、再播、播另一首、点歌），都必须调用 search_music 再按需 play_music，"
+        "或直接使用正确的 song_id 调用 play_music；禁止仅用「收到」「好的」等口头回复而不调用工具。"
         "对于天气类问题调用 get_weather_forecast 并传 city。"
         "如果用户在问几点几分下雨、未来一小时会不会下雨、雨什么时候停、要不要带伞、"
         "今晚/明早/下午会不会下雨等问题，也调用 get_weather_forecast，并把原始时间诉求放进 time_query。"
@@ -163,8 +165,28 @@ class AssistantService:
                     }
                 ],
             }
-        if "播放" in user_text:
-            keywords = user_text.replace("播放", "").strip() or user_text.strip()
+        play_markers = (
+            "换一首",
+            "来一首",
+            "放一首",
+            "点一首",
+            "播一首",
+            "放首歌",
+            "来首歌",
+            "放音乐",
+            "下一首",
+            "再播放",
+            "再播",
+            "播放",
+            "听歌",
+            "放歌",
+        )
+        if any(m in user_text for m in play_markers):
+            keywords = user_text
+            for m in sorted(play_markers, key=len, reverse=True):
+                if m in keywords:
+                    keywords = keywords.replace(m, "", 1)
+            keywords = keywords.strip() or user_text.strip()
             return {
                 "assistant_text": f"收到，我先帮你搜索：{keywords}",
                 "tool_calls": [
@@ -276,8 +298,43 @@ class AssistantService:
             return user_text.strip()
         return ""
 
+    @staticmethod
+    def _user_intends_music_play(user_text: str) -> bool:
+        """Detect play-music intent (pad 单轮对话下模型可能只回「收到」而不出 tool_calls）。"""
+        t = user_text.strip()
+        if not t:
+            return False
+        keys = (
+            "播放",
+            "放一首",
+            "来一首",
+            "点一首",
+            "放首歌",
+            "听歌",
+            "放歌",
+            "换一首",
+            "再播",
+            "下一首",
+            "来首歌",
+            "放音乐",
+            "播一首",
+        )
+        return any(k in t for k in keys)
+
+    def _new_song_request_clears_pending(self, user_text: str) -> bool:
+        """用户说播放新歌名时取消「待选第几首」，避免卡在上一轮列表。"""
+        if not re.search(r"(播放|放一首|来一首|点一首|播一首)", user_text):
+            return False
+        if re.search(r"第[一二三四五六七八九十两0-9]+首", user_text):
+            return False
+        rest = re.sub(r"(播放|放一首|来一首|点一首|播一首)", "", user_text).strip()
+        return len(rest) >= 2
+
     async def process_user_text(self, session_id: str, user_text: str) -> dict[str, Any]:
         """Produce assistant reply and optional tool execution results."""
+        if session_id in self._pending_song_selection and self._new_song_request_clears_pending(user_text):
+            self._pending_song_selection.pop(session_id, None)
+
         pending_result = await self._resolve_pending_selection(session_id, user_text)
         if pending_result is not None:
             return pending_result
@@ -290,7 +347,13 @@ class AssistantService:
                 system_prompt=system_prompt,
             )
             assistant_text = model_output.get("content", "") or "收到。"
-            tool_calls = model_output.get("tool_calls", [])
+            tool_calls = model_output.get("tool_calls", []) or []
+            # 小智式角色 prompt 常让模型口头应答；若不出工具则无法下发 AUDIO_URL，此处按关键词兜底搜索/播放
+            if not tool_calls and self._user_intends_music_play(user_text):
+                fb = self._fallback_response(user_text)
+                if fb.get("tool_calls"):
+                    tool_calls = fb["tool_calls"]
+                    assistant_text = fb["assistant_text"]
         else:
             fallback = self._fallback_response(user_text)
             assistant_text = fallback["assistant_text"]

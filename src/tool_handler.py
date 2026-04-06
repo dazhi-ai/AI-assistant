@@ -90,7 +90,10 @@ class ToolHandler:
                 "type": "function",
                 "function": {
                     "name": "search_music",
-                    "description": "Search songs by keywords.",
+                    "description": (
+                        "Search songs by keywords. Call this whenever the user asks to play a song, "
+                        "including a different song or play-again requests, unless you already have a song_id."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {"keywords": {"type": "string"}},
@@ -102,7 +105,10 @@ class ToolHandler:
                 "type": "function",
                 "function": {
                     "name": "play_music",
-                    "description": "Play one song by id.",
+                    "description": (
+                        "Play one song by Netease song id. Call after search_music or when song_id is known. "
+                        "Each new play request needs a tool call; do not skip for repeated requests."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {"song_id": {"type": "string"}},

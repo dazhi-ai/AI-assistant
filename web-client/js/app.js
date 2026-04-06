@@ -70,11 +70,13 @@
   var voiceRecorderChunks = [];          // MediaRecorder 分片
   var voiceCaptureKind = "";             // "" | "script" | "mr"
 
+  // 模型 JSON 加版本参数，避免浏览器缓存旧版（含日语 sound 的配置）
+  var MODEL_JSON_VER = "20260406m";
   var MODEL_URLS = {
-    "default": "./assets/models/shizuku/shizuku.model.json",
-    "sport":   "./assets/models/shizuku/shizuku.model.json",
-    "cute":    "./assets/models/shizuku/shizuku.model.json",
-    "tech":    "./assets/models/shizuku/shizuku.model.json"
+    "default": "./assets/models/shizuku/shizuku.model.json?v=" + MODEL_JSON_VER,
+    "sport":   "./assets/models/shizuku/shizuku.model.json?v=" + MODEL_JSON_VER,
+    "cute":    "./assets/models/shizuku/shizuku.model.json?v=" + MODEL_JSON_VER,
+    "tech":    "./assets/models/shizuku/shizuku.model.json?v=" + MODEL_JSON_VER
   };
 
   // ============================================================
@@ -867,8 +869,12 @@
   function renderAudio(payload) {
     var url = payload.url || "";
     if (!url) { return; }
+    // 用 fragment 区分每次播放，避免 WebView 缓存同一 URL 而不重新 load（不改动 ? 查询串，免破坏签名）
+    var baseUrl = url.split("#")[0];
+    url = baseUrl + "#_padts=" + Date.now();
     ttsPlayGeneration += 1;
     stopAiTtsPlayback();
+    try { unlockAudio(); } catch (e1) {}
     audioPlayer.src = url;
     if (audioText) { audioText.textContent = "播放地址：" + url; }
     playAudio();
@@ -1386,7 +1392,7 @@
   if (wsUrlInput) { wsUrlInput.value = autoWsUrl; }
 
   appendLog("DIAG", [
-    "JS版本: v20260406j",
+    "JS版本: v20260406m",
     "L2Dwidget: " + typeof L2Dwidget,
     "FileReader: " + typeof window.FileReader,
     "AudioContext: " + typeof (window.AudioContext || window.webkitAudioContext),
