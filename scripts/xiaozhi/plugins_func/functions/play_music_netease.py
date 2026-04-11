@@ -14,8 +14,9 @@ play_music 插件 - 网易云音乐版本
   single_loop  : 用户明确要求单曲循环时为 True，服务端在整首 Opus 下发结束后按估算时长再次入队，直到新播放或打断
 
 部署步骤：
-  1. scp 本文件到服务器 /tmp/，再 docker cp 进容器
-  2. 删除容器内 __pycache__，docker restart xiaozhi-esp32-server
+  1. scp 本文件到服务器 /tmp/，再 docker cp 为 plugins_func/functions/play_music.py
+  2. 与 patches/sendAudioHandle.py、listenMessageHandler.py 等一并部署（见 patches/README-netease-playback.md）
+  3. 删除相关 __pycache__，docker restart xiaozhi-esp32-server
 """
 
 import os
@@ -935,6 +936,9 @@ async def _enqueue_music_opus_direct(
         def _put_one_round(loop_round: int) -> bool:
             if getattr(conn, "netease_loop_generation", -1) != loop_generation:
                 return False
+            # 单曲循环下一轮：上一轮首包已下发后 suppress 已关，入队到首包前再次抑制 listen
+            if loop_round >= 1:
+                conn.netease_music_suppress_listen = True
             conn.sentence_id = uuid.uuid4().hex
             log.info(
                 f"[直连音乐] 已切换 conn.sentence_id 用于音乐流控：{conn.sentence_id[:12]}…"
@@ -973,14 +977,14 @@ async def _enqueue_music_opus_direct(
                 log.info(
                     f"[直连音乐] 单曲循环 第 {loop_round + 1} 轮已入队（帧数={len(opus_chunks)}）"
                 )
+            # 队列已就绪，但流控线程可能尚未下发首帧 Opus；由 sendAudioHandle._do_send_audio
+            # 在首包真正发出后清除 wait_first_downlink 并解除 suppress_listen。
+            conn.netease_music_wait_first_downlink = True
             return True
 
         if not _put_one_round(0):
             log.info("[直连音乐] 下发前检测到新播放任务，已取消")
             return
-
-        # 首轮已写入播放队列，允许客户端 listen start 正常参与会话（单曲循环后续轮次不再抑制）。
-        conn.netease_music_suppress_listen = False
 
         if single_loop:
             log.info("[直连音乐] 单曲循环已开启，曲目按估算时长结束后自动再次入队")
@@ -1008,6 +1012,7 @@ async def _enqueue_music_opus_direct(
     finally:
         conn.netease_music_expect_delivery = False
         conn.netease_music_suppress_listen = False
+        conn.netease_music_wait_first_downlink = False
 
 
 async def _handle_netease_play(

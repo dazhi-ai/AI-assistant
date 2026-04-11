@@ -28,18 +28,20 @@
 | `abortHandle.py` | `core/handle/abortHandle.py` |
 | `receiveAudioHandle.py` | `core/handle/receiveAudioHandle.py` |
 | `listenMessageHandler.py` | `core/handle/textHandler/listenMessageHandler.py` |
+| `sendAudioHandle.py` | `core/handle/sendAudioHandle.py`（**必装**：首帧 Opus 实际下发后再解除 `netease_music_suppress_listen`，避免「已入队但设备尚未听到第一个音符」时进聆听） |
 | `abortMessageHandler.py` | `core/handle/textHandler/abortMessageHandler.py`（**必装**：`reason=wake_word_detected` 时传 `from_wake_word=True`，否则播歌防打断窗口内无法再次唤醒） |
 | `../plugins_func/functions/play_music_netease.py` | `plugins_func/functions/play_music.py`（或你实际挂载的 play_music 文件名） |
 
 部署示例（路径按你环境调整）：
 
 ```bash
-scp -P 1258 abortHandle.py abortMessageHandler.py receiveAudioHandle.py listenMessageHandler.py root@HOST:/tmp/
+scp -P 1258 abortHandle.py abortMessageHandler.py receiveAudioHandle.py listenMessageHandler.py sendAudioHandle.py root@HOST:/tmp/
 scp -P 1258 ../plugins_func/functions/play_music_netease.py root@HOST:/tmp/play_music.py
 ssh -p 1258 root@HOST "docker cp /tmp/abortHandle.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/abortHandle.py && \
   docker cp /tmp/abortMessageHandler.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/textHandler/abortMessageHandler.py && \
   docker cp /tmp/receiveAudioHandle.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/receiveAudioHandle.py && \
   docker cp /tmp/listenMessageHandler.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/textHandler/listenMessageHandler.py && \
+  docker cp /tmp/sendAudioHandle.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/sendAudioHandle.py && \
   docker cp /tmp/play_music.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/plugins_func/functions/play_music.py && \
   docker exec xiaozhi-esp32-server find /opt/xiaozhi-esp32-server -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; \
   docker restart xiaozhi-esp32-server"
