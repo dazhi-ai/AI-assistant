@@ -38,6 +38,7 @@ class TTSService:
         self._volc_volume_ratio = settings.tts_volc_volume_ratio
         self._volc_pitch_ratio = settings.tts_volc_pitch_ratio
         self._volc_auth_style = settings.tts_volc_auth_style
+        self._volc_tts_resource_id = (settings.volc_tts_resource_id or "").strip()
         self._last_error = ""
 
     @property
@@ -74,19 +75,26 @@ class TTSService:
 
     def _resolve_volc_http_url(self) -> str:
         """Resolve volc HTTP endpoint, tolerating ws-style URLs in config."""
+        v3_uni = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
         base_url = (self._volc_base_url or "").strip()
         if base_url:
             if base_url.startswith("ws://") or base_url.startswith("wss://"):
                 scheme = "https://" if base_url.startswith("wss://") else "http://"
                 host_path = base_url.split("://", 1)[1]
                 if host_path.endswith("/api/v3/tts/bidirection"):
-                    host_path = host_path.replace("/api/v3/tts/bidirection", "/api/v1/tts")
+                    host_path = host_path.replace(
+                        "/api/v3/tts/bidirection", "/api/v3/tts/unidirectional"
+                    )
                 return f"{scheme}{host_path}"
             return base_url
         ws_url = (self._volc_ws_url or "").strip()
         if "openspeech.bytedance.com" in ws_url:
-            return "https://openspeech.bytedance.com/api/v1/tts"
+            return v3_uni
         return ""
+
+    @staticmethod
+    def _is_volc_openspeech_v3_http(http_url: str) -> bool:
+        return "openspeech.bytedance.com" in http_url and "/api/v3/tts/unidirectional" in http_url
 
     def _mask_secret(self, secret_text: str) -> str:
         """Mask secret values for safe startup logging."""
@@ -120,6 +128,7 @@ class TTSService:
             resolved_http_url = self._resolve_volc_http_url()
             check["volc_http_url"] = resolved_http_url
             check["volc_ws_url"] = (self._volc_ws_url or "").strip()
+            check["volc_tts_resource_id"] = self._volc_tts_resource_id
             check["voice_type"] = self._volc_voice_type
             check["cluster"] = self._volc_cluster
             check["encoding"] = self._volc_encoding
@@ -172,6 +181,63 @@ class TTSService:
         }
         return json.dumps(payload).encode("utf-8")
 
+    def _build_volc_v3_unidirectional_payload(self, text: str) -> bytes:
+        """Body for openspeech HTTP Chunked V3 unidirectional (matches X-Api-Resource-Id billing)."""
+        fmt = self._volc_encoding if self._volc_encoding in {"mp3", "ogg_opus", "pcm", "wav"} else "mp3"
+        speech = int(round((self._volc_speed_ratio - 1.0) * 50))
+        speech = max(-50, min(100, speech))
+        loud = int(round((self._volc_volume_ratio - 1.0) * 50))
+        loud = max(-50, min(100, loud))
+        audio_params: dict[str, object] = {
+            "format": fmt,
+            "speech_rate": speech,
+            "loudness_rate": loud,
+        }
+        payload = {
+            "user": {"uid": "ai-assistant"},
+            "req_params": {
+                "text": text,
+                "speaker": self._volc_voice_type.strip(),
+                "audio_params": audio_params,
+            },
+        }
+        return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    def _extract_volc_v3_audio(self, raw_bytes: bytes, content_type: str) -> bytes:
+        """Parse V3 unidirectional JSON body (single object or newline-delimited chunks with base64 audio)."""
+        if "audio" in content_type and "json" not in content_type:
+            return raw_bytes
+        text = raw_bytes.decode("utf-8", errors="ignore").strip()
+        if not text:
+            raise ValueError("empty V3 TTS response body")
+        pieces: list[bytes] = []
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            code = obj.get("code")
+            if code not in (None, 0, "0") and not str(obj.get("data", "")).strip():
+                msg = obj.get("message") or obj
+                raise ValueError(f"V3 TTS error: {msg}")
+            b64 = str(obj.get("data", "") or "").strip()
+            if not b64 and isinstance(obj.get("result"), dict):
+                b64 = str(obj["result"].get("audio", "") or "").strip()
+            if b64:
+                pieces.append(base64.b64decode(b64))
+        if pieces:
+            return b"".join(pieces)
+        obj = json.loads(text)
+        b64 = str(obj.get("data", "") or "").strip()
+        if not b64 and isinstance(obj.get("result"), dict):
+            b64 = str(obj["result"].get("audio", "") or "").strip()
+        if not b64:
+            raise ValueError(f"Missing audio in V3 TTS response: {str(obj)[:500]}")
+        return base64.b64decode(b64)
+
     def _extract_volc_audio(self, raw_bytes: bytes, content_type: str) -> bytes:
         """Normalize volc response body to raw audio bytes."""
         if "application/json" not in content_type:
@@ -191,6 +257,13 @@ class TTSService:
             self._set_error("TTS_VOLC_BASE_URL is empty and no fallback HTTP endpoint is available.")
             return
 
+        use_v3 = self._is_volc_openspeech_v3_http(http_url)
+        payload_bytes = (
+            self._build_volc_v3_unidirectional_payload(text)
+            if use_v3
+            else self._build_volc_payload(text)
+        )
+
         def _request_sync() -> tuple[bool, str, bytes] | None:
             if not http_url:
                 return None
@@ -198,9 +271,15 @@ class TTSService:
             headers = {"Content-Type": "application/json"}
             if auth_header:
                 headers["Authorization"] = auth_header
+            if use_v3 and self._volc_app_id.strip() and self._volc_access_token.strip():
+                headers["X-Api-App-Id"] = self._volc_app_id.strip()
+                headers["X-Api-Access-Key"] = self._volc_access_token.strip()
+                if self._volc_tts_resource_id:
+                    headers["X-Api-Resource-Id"] = self._volc_tts_resource_id
+                headers["X-Api-Connect-Id"] = str(uuid.uuid4())
             req = request.Request(
                 http_url,
-                data=self._build_volc_payload(text),
+                data=payload_bytes,
                 headers=headers,
                 method="POST",
             )
@@ -231,7 +310,10 @@ class TTSService:
             self._set_error(f"Volc TTS HTTP request failed: {message}")
             return
         try:
-            audio_bytes = self._extract_volc_audio(raw_bytes=body, content_type=content_type)
+            if use_v3:
+                audio_bytes = self._extract_volc_v3_audio(body, content_type)
+            else:
+                audio_bytes = self._extract_volc_audio(raw_bytes=body, content_type=content_type)
         except (ValueError, json.JSONDecodeError) as exc:
             self._set_error(f"Volc TTS parse error: {exc}")
             return

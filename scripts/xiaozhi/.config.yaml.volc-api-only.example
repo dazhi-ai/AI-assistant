@@ -50,11 +50,13 @@ ASR:
 #   zh_female_tianmei_moon_bigtts       - 女声（甜美）
 TTS:
   HuoshanDoubleStreamTTS:
-    type: huoshan
+    type: huoshan_double_stream
+    ws_url: wss://openspeech.bytedance.com/api/v3/tts/bidirection
     appid: 填入你的VOLC_APP_ID
     access_token: 填入你的VOLC_ACCESS_TOKEN
-    voice: zh_female_wanwanxiaohe_moon_bigtts
-    cluster: volcano_tts
+    resource_id: seed-tts-2.0
+    speaker: zh_female_wanwanxiaohe_moon_bigtts
+    enable_ws_reuse: true
     output_dir: tmp/
 
 # ─── 意图识别 ──────────────────────────────────────────────────────

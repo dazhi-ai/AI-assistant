@@ -47,6 +47,8 @@ class Settings:
     volc_secret_key: str
     volc_asr_ws_url: str
     volc_tts_ws_url: str
+    # 火山语音合成大模型 V3：请求头 X-Api-Resource-Id（如豆包 2.0 字符版 seed-tts-2.0）
+    volc_tts_resource_id: str
     volc_asr_cluster: str
     asr_provider: str
     asr_base_url: str
@@ -125,6 +127,7 @@ def load_settings() -> Settings:
     volc_secret_key = os.getenv("VOLC_SECRET_KEY", "")
     volc_asr_ws_url = os.getenv("VOLC_ASR_WS_URL", "wss://openspeech.bytedance.com/api/v2/asr")
     volc_tts_ws_url = os.getenv("VOLC_TTS_WS_URL", "wss://openspeech.bytedance.com/api/v3/tts/bidirection")
+    volc_tts_resource_id = os.getenv("VOLC_TTS_RESOURCE_ID", "seed-tts-2.0").strip()
     # 与 xiaozhi DoubaoStreamASR 一致；若控制台仅开通「流式」未开通「一句话」则必须用 streaming_common
     volc_asr_cluster = os.getenv("VOLC_ASR_CLUSTER", "volcengine_streaming_common").strip()
     asr_provider_raw = os.getenv("ASR_PROVIDER", "openai").strip().lower()
@@ -191,6 +194,7 @@ def load_settings() -> Settings:
         volc_secret_key=volc_secret_key,
         volc_asr_ws_url=volc_asr_ws_url,
         volc_tts_ws_url=volc_tts_ws_url,
+        volc_tts_resource_id=volc_tts_resource_id,
         volc_asr_cluster=volc_asr_cluster,
         asr_provider=asr_provider,
         asr_base_url=asr_base_url,
