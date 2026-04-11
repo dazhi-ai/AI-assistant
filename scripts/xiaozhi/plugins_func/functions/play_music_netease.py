@@ -1253,6 +1253,16 @@ async def _handle_netease_play(
     if not music_path:
         conn.logger.bind(tag=TAG).error("网易云和本地均无可播放文件，通知用户")
 
+    # 必须在 LAST 入队与 create_task 之前同步置位（中间勿 await），否则设备在口播结束后
+    # 极早上报 listen start 时，异步的 _enqueue_music_opus_direct 尚未执行，suppress 仍为 False，
+    # listenMessageHandler 会 reset_audio_states → 表现为「口播完立刻进聆听」。
+    if music_path:
+        conn.netease_music_expect_delivery = True
+        conn.netease_music_suppress_listen = True
+        conn.logger.bind(tag=TAG).info(
+            "[直连音乐] LAST 前已开启排播窗口（抑制 listen start 至首轮入队/超时/失败）"
+        )
+
     conn.tts.tts_text_queue.put(
         TTSMessageDTO(
             sentence_id=music_sid,
