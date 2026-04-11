@@ -1010,6 +1010,14 @@ async def _enqueue_music_opus_direct(
     except Exception as exc:
         log.error(f"[直连音乐] 异常：{exc}")
     finally:
+        # 新 play_music 会递增 netease_loop_generation，旧直连任务 return 时仍会走 finally。
+        # 若在全局 conn 上无条件清标志，会擦掉新任务刚设的 suppress / expect_delivery（第二次换歌尤甚）。
+        if getattr(conn, "netease_loop_generation", -1) != loop_generation:
+            log.debug(
+                f"[直连音乐] 旧任务退出（gen={loop_generation}），"
+                f"当前 conn.gen={getattr(conn, 'netease_loop_generation', None)}，不清除排播标志"
+            )
+            return
         conn.netease_music_expect_delivery = False
         conn.netease_music_suppress_listen = False
         conn.netease_music_wait_first_downlink = False
