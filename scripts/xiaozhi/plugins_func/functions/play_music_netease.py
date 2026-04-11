@@ -127,6 +127,10 @@ async def _netease_resume_prompt_worker(conn: "ConnectionHandler") -> None:
 # 用于降低唤醒词误触导致「歌刚开就断」；需与 core/handle/abortHandle.py 补丁配合部署。
 NETEASE_MUSIC_ANTI_INTERRUPT_SEC = 15.0
 
+# 从直连任务开始到此时间内须完成「首次写入 tts_audio_queue」；超时视为排队失败，
+# 解除聆听抑制并放弃本次下发（与 listenMessageHandler 补丁配合）。
+NETEASE_MUSIC_QUEUE_TIMEOUT_SEC = 10.0
+
 # 单曲循环时，估算每帧时长（秒）。与设备 hello 里 frame_duration=60 对齐。
 NETEASE_OPUS_FRAME_SEC = 60.0 / 1000.0
 # 每轮之间多等一小段时间，避免与设备尾包竞态导致叠音
@@ -743,9 +747,29 @@ async def _enqueue_music_opus_direct(
     兜底，在口播任务已走远后仍强制编码下发。
     """
     log = conn.logger.bind(tag=TAG)
+    # 口播结束到音乐 Opus 入队之间的空窗内，设备易自动开麦；配合 receiveAudioHandle
+    # 在此窗口忽略 VAD 触发的 abort（唤醒词仍走设备上报的 abort 消息）。
+    conn.netease_music_expect_delivery = True
+    # 排队列期间服务端不处理客户端 listen start（见 listenMessageHandler 补丁）；首轮入队成功后立即解除。
+    conn.netease_music_suppress_listen = True
+    queue_deadline = time.monotonic() + NETEASE_MUSIC_QUEUE_TIMEOUT_SEC
+
+    def _queue_time_left() -> float:
+        return queue_deadline - time.monotonic()
+
     try:
         max_wait = 120.0
-        phase2_force_after = 3.0
+        # 过大会在口播 LAST 之后、音乐入队之前留出数秒「无下行音频」空窗，设备随即发
+        # listen start（日志里 listen 夹在 LAST 与 phase2 强制/已全部写入 之间）。略缩短以优先排音乐。
+        phase2_force_after = 1.35
+        # 进入 phase2 后，须连续「无激活」至少这么久才认为会话结束；否则易把上一轮 TTS 的
+        # activate_session 残留尖峰当成「新会话已结束」，在占位口播尚未合成时就提前下发 Opus，
+        # 表现为第二次换歌只播报、设备已进聆听但听不到新歌（见日志：本会话已结束 与 句子语音生成成功 顺序颠倒）。
+        phase2_quiet_after = 2.0
+        # 自进入 phase2 起至少经过这么久，才允许用「静默」结束会话。
+        phase2_min_in_phase2 = 3.8
+        # phase=0 长期无 sentence_id 匹配时不再空等满 120s（避免出现「只口播无音乐」）
+        phase0_force_after = 22.0
         slept = 0.0
         step = 0.15
 
@@ -769,7 +793,15 @@ async def _enqueue_music_opus_direct(
         phase = 0  # 0=等 sentence_id 切到 music_sid；1=等 activate True；2=等 activate False
         t_phase1 = 0.0
         t_phase2 = 0.0
+        t_phase2_last_active = 0.0  # phase2 内最近一次 activate_session==True 的时间
         while slept < max_wait:
+            if _queue_time_left() <= 0:
+                log.warning(
+                    f"[直连音乐] 排队列超过 {NETEASE_MUSIC_QUEUE_TIMEOUT_SEC:.0f}s 仍未入队，"
+                    "视为失败，解除聆听抑制并放弃下发"
+                )
+                encode_task.cancel()
+                return
             if getattr(conn, "netease_loop_generation", -1) != loop_generation:
                 log.info("[直连音乐] 已有新的播放任务，取消本次直连等待")
                 encode_task.cancel()
@@ -788,15 +820,30 @@ async def _enqueue_music_opus_direct(
                 phase = 1
                 t_phase1 = time.monotonic()
                 log.info(f"[直连音乐] 已进入网易云 TTS 会话 sentence_id={music_sid[:12]}…")
+            elif phase == 0 and slept >= phase0_force_after:
+                log.warning(
+                    f"[直连音乐] phase=0 已等待 {phase0_force_after:.0f}s，"
+                    f"conn.sentence_id 仍未等于音乐会话 id（当前 {sid!r}，期望前缀 {music_sid[:12]}…），"
+                    "强制按「口播会话已结束」尝试下发音乐；请核对 huoshan_double_stream sentence_id 补丁与 TTS 连接是否健康"
+                )
+                phase = 1
+                t_phase1 = time.monotonic() - 2.0
             if phase == 1:
                 if active:
                     phase = 2
                     t_phase2 = time.monotonic()
+                    t_phase2_last_active = t_phase2
                 elif t_phase1 and (time.monotonic() - t_phase1) > 1.5:
                     log.info("[直连音乐] sid 已匹配但未采到激活态，按会话已结束处理并下发")
                     break
             if phase == 2:
-                if not active:
+                if active:
+                    t_phase2_last_active = time.monotonic()
+                elif (
+                    t_phase2_last_active > 0
+                    and (time.monotonic() - t_phase2_last_active) >= phase2_quiet_after
+                    and (time.monotonic() - t_phase2) >= phase2_min_in_phase2
+                ):
                     log.info("[直连音乐] 本会话已结束，开始编码 MP3 并下发")
                     break
                 if t_phase2 and (time.monotonic() - t_phase2) > phase2_force_after:
@@ -814,7 +861,16 @@ async def _enqueue_music_opus_direct(
             encode_task.cancel()
             return
 
-        await asyncio.sleep(0.4)
+        # 极短缓冲：让火山线程把 LAST 排进管道即可衔接音乐，避免人为静音窗诱发设备先进聆听。
+        tl = _queue_time_left()
+        if tl <= 0:
+            log.warning(
+                f"[直连音乐] 排队列超过 {NETEASE_MUSIC_QUEUE_TIMEOUT_SEC:.0f}s（phase 已结束），"
+                "视为失败，放弃下发"
+            )
+            encode_task.cancel()
+            return
+        await asyncio.sleep(min(0.28, tl))
 
         if conn.stop_event.is_set():
             encode_task.cancel()
@@ -824,8 +880,23 @@ async def _enqueue_music_opus_direct(
             conn.client_abort = False
 
         # ── 等待后台编码完成（通常已在 TTS 等待期间完成） ──
+        tl = _queue_time_left()
+        if tl <= 0:
+            log.warning(
+                f"[直连音乐] 排队列超过 {NETEASE_MUSIC_QUEUE_TIMEOUT_SEC:.0f}s（编码前），"
+                "视为失败，放弃下发"
+            )
+            encode_task.cancel()
+            return
         try:
-            await encode_task
+            await asyncio.wait_for(encode_task, timeout=tl)
+        except asyncio.TimeoutError:
+            log.warning(
+                f"[直连音乐] 排队列超过 {NETEASE_MUSIC_QUEUE_TIMEOUT_SEC:.0f}s（编码超时），"
+                "视为失败，放弃下发"
+            )
+            encode_task.cancel()
+            return
         except asyncio.CancelledError:
             return
         encode_elapsed = time.monotonic() - t_encode_start
@@ -844,6 +915,13 @@ async def _enqueue_music_opus_direct(
 
         if getattr(conn, "netease_loop_generation", -1) != loop_generation:
             log.info("[直连音乐] 编码完成后发现新播放任务，跳过本次下发")
+            return
+
+        if _queue_time_left() <= 0:
+            log.warning(
+                f"[直连音乐] 排队列超过 {NETEASE_MUSIC_QUEUE_TIMEOUT_SEC:.0f}s（入队前），"
+                "视为失败，放弃下发"
+            )
             return
 
         # 本轮估算播放时长（秒），用于单曲循环的等待间隔；单曲循环时防打断需覆盖整首，否则约 15s 后
@@ -901,6 +979,9 @@ async def _enqueue_music_opus_direct(
             log.info("[直连音乐] 下发前检测到新播放任务，已取消")
             return
 
+        # 首轮已写入播放队列，允许客户端 listen start 正常参与会话（单曲循环后续轮次不再抑制）。
+        conn.netease_music_suppress_listen = False
+
         if single_loop:
             log.info("[直连音乐] 单曲循环已开启，曲目按估算时长结束后自动再次入队")
             round_idx = 1
@@ -924,6 +1005,9 @@ async def _enqueue_music_opus_direct(
                 round_idx += 1
     except Exception as exc:
         log.error(f"[直连音乐] 异常：{exc}")
+    finally:
+        conn.netease_music_expect_delivery = False
+        conn.netease_music_suppress_listen = False
 
 
 async def _handle_netease_play(

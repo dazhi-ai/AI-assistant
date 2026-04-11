@@ -31,11 +31,22 @@ async def handleAudioMessage(conn: "ConnectionHandler", audio):
         if not hasattr(conn, "vad_resume_task") or conn.vad_resume_task.done():
             conn.vad_resume_task = asyncio.create_task(resume_vad_detection(conn))
         return
+    # 网易云：口播已结束、音乐 Opus 尚未入队时，勿因 VAD 触发 abort（会打断排播、设备易先进聆听）。
+    # 唤醒词仍由设备走 listen/abort 路径，不经此处 VAD abort。
+    vad_for_asr = have_voice
+    if have_voice and getattr(conn, "netease_music_expect_delivery", False):
+        vad_for_asr = False
+        conn.last_activity_time = time.time() * 1000
     if have_voice:
         if conn.client_is_speaking and conn.client_listen_mode != "manual":
-            await handleAbortMessage(conn, from_wake_word=False)
+            if getattr(conn, "netease_music_expect_delivery", False):
+                conn.logger.bind(tag=TAG).debug(
+                    "网易云排播窗口：跳过 VAD 触发的 handleAbortMessage"
+                )
+            else:
+                await handleAbortMessage(conn, from_wake_word=False)
     await no_voice_close_connect(conn, have_voice)
-    await conn.asr.receive_audio(conn, audio, have_voice)
+    await conn.asr.receive_audio(conn, audio, vad_for_asr)
 
 
 async def resume_vad_detection(conn: "ConnectionHandler"):

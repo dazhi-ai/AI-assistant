@@ -28,14 +28,16 @@
 | `abortHandle.py` | `core/handle/abortHandle.py` |
 | `receiveAudioHandle.py` | `core/handle/receiveAudioHandle.py` |
 | `listenMessageHandler.py` | `core/handle/textHandler/listenMessageHandler.py` |
+| `abortMessageHandler.py` | `core/handle/textHandler/abortMessageHandler.py`（**必装**：`reason=wake_word_detected` 时传 `from_wake_word=True`，否则播歌防打断窗口内无法再次唤醒） |
 | `../plugins_func/functions/play_music_netease.py` | `plugins_func/functions/play_music.py`（或你实际挂载的 play_music 文件名） |
 
 部署示例（路径按你环境调整）：
 
 ```bash
-scp -P 1258 abortHandle.py receiveAudioHandle.py listenMessageHandler.py root@HOST:/tmp/
+scp -P 1258 abortHandle.py abortMessageHandler.py receiveAudioHandle.py listenMessageHandler.py root@HOST:/tmp/
 scp -P 1258 ../plugins_func/functions/play_music_netease.py root@HOST:/tmp/play_music.py
 ssh -p 1258 root@HOST "docker cp /tmp/abortHandle.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/abortHandle.py && \
+  docker cp /tmp/abortMessageHandler.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/textHandler/abortMessageHandler.py && \
   docker cp /tmp/receiveAudioHandle.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/receiveAudioHandle.py && \
   docker cp /tmp/listenMessageHandler.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/core/handle/textHandler/listenMessageHandler.py && \
   docker cp /tmp/play_music.py xiaozhi-esp32-server:/opt/xiaozhi-esp32-server/plugins_func/functions/play_music.py && \
@@ -44,6 +46,10 @@ ssh -p 1258 root@HOST "docker cp /tmp/abortHandle.py xiaozhi-esp32-server:/opt/x
 ```
 
 ## 若「口播正常、音乐仍无声」
+
+日志若出现 **`[直连音乐] 等待超时 phase=0，放弃下发`**：表示在超时时间内 `conn.sentence_id` 从未与插件生成的 `music_sid` 对齐，直连任务直接放弃 → 用户只会听到火山口播。请确认 **`huoshan_double_stream.py` 已打 `message.sentence_id` 补丁**（`patch_huoshan_sentence_id.py`），并关注 abort 后是否仍长期 **「使用已有链接」** 导致 TTS 会话脏状态；插件内已对 phase=0 增加 **约 22s 强制继续下发** 的兜底，避免再空等满 120s。
+
+**口播后设备先进聆听、无音乐**：避免在「等 `client_is_speaking` 变 False」上制造长静音窗；直连任务设 **`conn.netease_music_expect_delivery`**，`receiveAudioHandle` 在窗口内 **不把 VAD 当有效人声送 ASR**、且 **跳过 VAD 触发的 abort**，音乐 **LAST 后短 sleep（约 0.45s）即入队**。设备侧「仅唤醒词开麦」若仍不满足，需固件/智控台对话策略配合。
 
 小智 `sendAudioHandle` 用 `conn.sentence_id` 与 `audio_flow_control["sentence_id"]` 判断是否**复用**同一句的流控。  
 火山 TTS 结束后 `conn.sentence_id` 仍是本次 `music_sid` 时，直连音乐的 `FIRST` 会误走 `add_message(sentence_start)`，与上一会话流控串台。

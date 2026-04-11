@@ -37,6 +37,13 @@ class ListenTextMessageHandler(TextMessageHandler):
                 f"客户端拾音模式：{conn.client_listen_mode}"
             )
         if msg_json["state"] == "start":
+            # 网易云直连：音乐尚未首次写入播放队列时抑制「进聆听」，避免口播 LAST 后设备开麦与服务端状态错位；
+            # 超时由 play_music_netease 解除（见 NETEASE_MUSIC_QUEUE_TIMEOUT_SEC）。
+            if getattr(conn, "netease_music_suppress_listen", False):
+                conn.logger.bind(tag=TAG).info(
+                    "网易云排队列进行中，忽略本次 listen start（首轮入队后或超时后恢复）"
+                )
+                return
             conn.reset_audio_states()
         elif msg_json["state"] == "stop":
             conn.client_voice_stop = True
