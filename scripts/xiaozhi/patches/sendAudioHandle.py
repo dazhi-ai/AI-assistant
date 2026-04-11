@@ -17,6 +17,10 @@ from core.providers.tts.dto.dto import SentenceType
 from core.utils.audioRateController import AudioRateController
 
 TAG = __name__
+# 与 receiveAudioHandle.no_voice_close_connect 默认结束提示一致，用于 send_stt_message 短路判断
+DEFAULT_IDLE_END_PROMPT = (
+    "请你以```时间过得真快```未来头，用富有感情、依依不舍的话来结束这场对话吧。！"
+)
 # 音频帧时长（毫秒）
 AUDIO_FRAME_DURATION = 60
 # 预缓冲包数量，直接发送以减少延迟
@@ -305,10 +309,12 @@ async def send_tts_message(conn: "ConnectionHandler", state, text=None):
 
 async def send_stt_message(conn: "ConnectionHandler", text):
     """发送 STT 状态消息"""
-    end_prompt_str = conn.config.get("end_prompt", {}).get("prompt")
-    if end_prompt_str and end_prompt_str == text:
-        await send_tts_message(conn, "start")
-        return
+    end_cfg = conn.config.get("end_prompt", {}) or {}
+    if end_cfg.get("enable", True) is not False:
+        resolved = end_cfg.get("prompt") or DEFAULT_IDLE_END_PROMPT
+        if resolved == text:
+            # 静音超时结束话术：仅由 conn.chat 入队 TTS，避免此处 start 与 chat 首轮叠成双段开口
+            return
 
     # 解析JSON格式，提取实际的用户说话内容
     display_text = text

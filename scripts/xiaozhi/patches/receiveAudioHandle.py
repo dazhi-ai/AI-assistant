@@ -19,12 +19,19 @@ from core.utils.util import audio_to_data, remove_punctuation_and_length
 from core.handle.abortHandle import handleAbortMessage
 from core.handle.intentHandler import handle_user_intent
 from core.utils.output_counter import check_device_output_limit
-from core.handle.sendAudioHandle import send_stt_message, SentenceType
+from core.handle.sendAudioHandle import (
+    DEFAULT_IDLE_END_PROMPT,
+    send_stt_message,
+    SentenceType,
+)
 
 TAG = __name__
 
 
 async def handleAudioMessage(conn: "ConnectionHandler", audio):
+    # 与官方对齐：已走明确退出流程时不再处理音频（避免与静音结束话术等路径交叉）
+    if getattr(conn, "is_exiting", False):
+        return
     have_voice = conn.vad.is_vad(conn, audio)
     if hasattr(conn, "just_woken_up") and conn.just_woken_up:
         have_voice = False
@@ -129,6 +136,7 @@ async def no_voice_close_connect(conn: "ConnectionHandler", have_voice):
         )
         if (
             not conn.close_after_chat
+            and not getattr(conn, "_idle_goodbye_inflight", False)
             and no_voice_time > 1000 * close_connection_no_voice_time
         ):
             conn.close_after_chat = True
@@ -138,10 +146,15 @@ async def no_voice_close_connect(conn: "ConnectionHandler", have_voice):
                 conn.logger.bind(tag=TAG).info("结束对话，无需发送结束提示语")
                 await conn.close()
                 return
-            prompt = end_prompt.get("prompt")
-            if not prompt:
-                prompt = "请你以```时间过得真快```未来头，用富有感情、依依不舍的话来结束这场对话吧。！"
-            await startToChat(conn, prompt)
+            prompt = end_prompt.get("prompt") or DEFAULT_IDLE_END_PROMPT
+            # 防重入：await startToChat 期间仍会不断收到静音帧，避免重复触发结束话术
+            conn._idle_goodbye_inflight = True
+            try:
+                # 刷新活动时间，避免 conn._check_timeout（no_voice+60s）与结束播报叠在一起强行断连
+                conn.last_activity_time = time.time() * 1000
+                await startToChat(conn, prompt)
+            finally:
+                conn._idle_goodbye_inflight = False
 
 
 async def max_out_size(conn: "ConnectionHandler"):
