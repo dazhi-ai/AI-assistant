@@ -39,9 +39,13 @@ class ListenTextMessageHandler(TextMessageHandler):
         if msg_json["state"] == "start":
             # 网易云直连：音乐尚未首次写入播放队列时抑制「进聆听」，避免口播 LAST 后设备开麦与服务端状态错位；
             # 超时由 play_music_netease 解除（见 NETEASE_MUSIC_QUEUE_TIMEOUT_SEC）。
-            if getattr(conn, "netease_music_suppress_listen", False):
+            # 播歌场景（netease_music_hold_listen_until_wake）：口播与整首播放期间不因设备自动 listen start
+            # 进聆听；仅唤醒词 detect 或唤醒词 abort 会清除该标志（聊天/新闻等不会置位，口播后仍正常进聆听）。
+            if getattr(conn, "netease_music_suppress_listen", False) or getattr(
+                conn, "netease_music_hold_listen_until_wake", False
+            ):
                 conn.logger.bind(tag=TAG).info(
-                    "网易云排队列进行中，忽略本次 listen start（首轮入队后或超时后恢复）"
+                    "播歌排播或挂起聆听中，忽略本次 listen start（首轮入队后或唤醒词前）"
                 )
                 return
             conn.reset_audio_states()
@@ -68,6 +72,9 @@ class ListenTextMessageHandler(TextMessageHandler):
 
                 is_wakeup_words = filtered_text in (conn.config.get("wakeup_words") or [])
                 enable_greeting = conn.config.get("enable_greeting", True)
+
+                if is_wakeup_words:
+                    conn.netease_music_hold_listen_until_wake = False
 
                 if is_wakeup_words and not enable_greeting:
                     if conn.client_is_speaking and conn.client_listen_mode != "manual":

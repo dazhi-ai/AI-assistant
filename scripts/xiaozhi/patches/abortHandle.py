@@ -9,6 +9,7 @@
 1. 播歌后一段时间内（conn.netease_music_shield_until）忽略**非唤醒**的 abort，防误触断播。
 2. 若本次 abort 来自**明确唤醒词**（listen detect → startToChat 传入 from_wake_word=True）：
    - 解除防打断窗口；
+   - 清除 conn.netease_music_hold_listen_until_wake，使播歌结束后可再次正常响应 listen start；
    - 若当前存在单曲循环快照（conn.netease_resume_snapshot），递增 netease_loop_generation 以停止后台循环，
      并置 netease_resume_prompt_armed，便于用户下一句非唤醒指令说完后播报「是否继续播放」。
 3. 其它情况与官方一致：client_abort、clear_queues、tts stop。
@@ -44,6 +45,8 @@ async def handleAbortMessage(conn: "ConnectionHandler", from_wake_word: bool = F
         conn.logger.bind(tag=TAG).info("唤醒词：已解除播歌防打断窗口")
 
     if from_wake_word:
+        # 允许设备在唤醒后正常走 listen start → reset_audio_states（播歌挂起聆听）
+        conn.netease_music_hold_listen_until_wake = False
         snap = getattr(conn, "netease_resume_snapshot", None)
         if isinstance(snap, dict) and snap.get("single_loop"):
             prev = int(getattr(conn, "netease_loop_generation", 0))

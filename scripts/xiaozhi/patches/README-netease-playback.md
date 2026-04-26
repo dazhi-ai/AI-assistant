@@ -1,5 +1,12 @@
 # 网易云直连播放与流控说明
 
+## 播歌 vs 聊天：何时进入「聆听」
+
+- **聊天 / 新闻 / 天气等**（未走网易云 `play_music` 成功入队）：不设置 `conn.netease_music_hold_listen_until_wake`，设备在口播结束后照常上报 `listen start`，服务端 `reset_audio_states`，与官方一致。
+- **播放歌曲**（`play_music` 已取得 `music_path` 并入队直连）：置 `conn.netease_music_hold_listen_until_wake = True`，在口播结束、整首播放及播放后，**忽略**设备自动上报的 `listen state=start`，避免因「假进聆听」打断排播；用户说**唤醒词**时，`listenMessageHandler` 在 `detect` 命中 `wakeup_words` 或 `abortHandle(..., from_wake_word=True)` 会清除该标志，之后 `listen start` 恢复正常。
+
+须与 `listenMessageHandler.py`、`abortHandle.py`、`play_music_netease.py` 一并部署。
+
 ## 单曲循环 `single_loop`
 
 工具参数 **`single_loop: true`** 时，当前这一首在整段 Opus 入队并**按估算时长（帧数×60ms+间隔）**结束后，会**自动再次入队**同一首，直到：
