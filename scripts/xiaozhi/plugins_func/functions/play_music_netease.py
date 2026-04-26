@@ -808,20 +808,33 @@ async def _enqueue_music_opus_direct(
             if _queue_time_left() <= 0:
                 log.warning(
                     f"[直连音乐] 排队列超过 {NETEASE_MUSIC_QUEUE_TIMEOUT_SEC:.0f}s 仍未入队，"
-                    "视为失败，解除聆听抑制并放弃下发"
+                    f"放弃下发；title={title!r} loop_gen={loop_generation} phase={phase}"
                 )
                 encode_task.cancel()
                 return
             if getattr(conn, "netease_loop_generation", -1) != loop_generation:
-                log.info("[直连音乐] 已有新的播放任务，取消本次直连等待")
+                log.info(
+                    "[直连音乐] 已有新的播放任务，取消本次直连等待；"
+                    f"title={title!r} task_gen={loop_generation} "
+                    f"conn_gen={getattr(conn, 'netease_loop_generation', None)}"
+                )
                 encode_task.cancel()
                 return
             if conn.stop_event.is_set():
-                log.info("[直连音乐] 连接已停止，取消播放")
+                log.info(
+                    "[直连音乐] 连接已停止，取消播放；"
+                    f"title={title!r} loop_gen={loop_generation}"
+                )
                 encode_task.cancel()
                 return
             if getattr(conn, "client_abort", False):
-                log.info("[直连音乐] 用户打断，取消播放")
+                log.info(
+                    "[直连音乐] 用户打断，取消播放（phase 等待循环内）；"
+                    f"phase={phase} slept={slept:.2f}s title={title!r} "
+                    f"loop_gen={loop_generation} sid={getattr(conn, 'sentence_id', None)!r} "
+                    f"hold={getattr(conn, 'netease_music_hold_listen_until_wake', None)} "
+                    f"suppress={getattr(conn, 'netease_music_suppress_listen', None)}"
+                )
                 encode_task.cancel()
                 return
             sid = getattr(conn, "sentence_id", None)
@@ -1009,7 +1022,11 @@ async def _enqueue_music_opus_direct(
                         log.info("[直连音乐] 新播放任务已提交，结束单曲循环")
                         return
                     if getattr(conn, "client_abort", False):
-                        log.info("[直连音乐] 用户打断，结束单曲循环")
+                        log.info(
+                            "[直连音乐] 用户打断，结束单曲循环；"
+                            f"title={title!r} loop_gen={loop_generation} "
+                            f"hold={getattr(conn, 'netease_music_hold_listen_until_wake', None)}"
+                        )
                         return
                     await asyncio.sleep(min(0.25, max(0.0, target - time.monotonic())))
                 if not _put_one_round(round_idx):
@@ -1022,9 +1039,10 @@ async def _enqueue_music_opus_direct(
         # 新 play_music 会递增 netease_loop_generation，旧直连任务 return 时仍会走 finally。
         # 若在全局 conn 上无条件清标志，会擦掉新任务刚设的 suppress / expect_delivery（第二次换歌尤甚）。
         if getattr(conn, "netease_loop_generation", -1) != loop_generation:
-            log.debug(
-                f"[直连音乐] 旧任务退出（gen={loop_generation}），"
-                f"当前 conn.gen={getattr(conn, 'netease_loop_generation', None)}，不清除排播标志"
+            log.info(
+                "[直连音乐] finally：旧任务退出，不清除排播标志；"
+                f"task_gen={loop_generation} conn_gen={getattr(conn, 'netease_loop_generation', None)} "
+                f"title={title!r}"
             )
             return
         conn.netease_music_expect_delivery = False
@@ -1033,12 +1051,26 @@ async def _enqueue_music_opus_direct(
         # listenMessageHandler 会 reset_audio_states，队列里大量 MIDDLE 尚未送出即被截断，
         # 日志表现为 FIRST 与 LAST 紧挨、无「网易云：首帧 Opus 已下行」、用户侧无声只听进聆听。
         if conn.stop_event.is_set() or getattr(conn, "client_abort", False):
+            log.info(
+                "[直连音乐] finally：因 stop 或 client_abort 清理 suppress/wait_first/hold；"
+                f"stop={conn.stop_event.is_set()} client_abort={getattr(conn, 'client_abort', False)} "
+                f"wait_first_downlink={getattr(conn, 'netease_music_wait_first_downlink', False)} "
+                f"title={title!r} loop_gen={loop_generation}"
+            )
             conn.netease_music_suppress_listen = False
             conn.netease_music_wait_first_downlink = False
             conn.netease_music_hold_listen_until_wake = False
             return
         if getattr(conn, "netease_music_wait_first_downlink", False):
+            log.info(
+                "[直连音乐] finally：首包待下行，保留 suppress/hold；"
+                f"title={title!r} loop_gen={loop_generation}"
+            )
             return
+        log.info(
+            "[直连音乐] finally：未等到首帧下行路径，清理 suppress/wait_first 并释放 hold；"
+            f"title={title!r} loop_gen={loop_generation}"
+        )
         conn.netease_music_suppress_listen = False
         conn.netease_music_wait_first_downlink = False
         # 未成功等到首帧入队（超时/编码失败等）：释放「仅唤醒词开麦」挂起

@@ -25,6 +25,21 @@ from core.providers.asr.dto.dto import InterfaceType
 TAG = __name__
 
 
+def _netease_listen_diag(conn: "ConnectionHandler") -> str:
+    """网易云排播相关标志，便于对照「口播后进聆听」类问题。"""
+    sup = bool(getattr(conn, "netease_music_suppress_listen", False))
+    hold = bool(getattr(conn, "netease_music_hold_listen_until_wake", False))
+    wait_first = bool(getattr(conn, "netease_music_wait_first_downlink", False))
+    expect = bool(getattr(conn, "netease_music_expect_delivery", False))
+    gen = getattr(conn, "netease_loop_generation", None)
+    abort = bool(getattr(conn, "client_abort", False))
+    mode = getattr(conn, "client_listen_mode", None)
+    return (
+        f"suppress_listen={sup} hold_until_wake={hold} wait_first_downlink={wait_first} "
+        f"expect_delivery={expect} loop_gen={gen} client_abort={abort} listen_mode={mode!r}"
+    )
+
+
 class ListenTextMessageHandler(TextMessageHandler):
     @property
     def message_type(self) -> TextMessageType:
@@ -45,9 +60,14 @@ class ListenTextMessageHandler(TextMessageHandler):
                 conn, "netease_music_hold_listen_until_wake", False
             ):
                 conn.logger.bind(tag=TAG).info(
-                    "播歌排播或挂起聆听中，忽略本次 listen start（首轮入队后或唤醒词前）"
+                    "播歌排播或挂起聆听中，忽略本次 listen start；"
+                    + _netease_listen_diag(conn)
                 )
                 return
+            conn.logger.bind(tag=TAG).info(
+                "网易云诊断：listen start 未抑制，将执行 reset_audio_states；"
+                + _netease_listen_diag(conn)
+            )
             conn.reset_audio_states()
         elif msg_json["state"] == "stop":
             conn.client_voice_stop = True

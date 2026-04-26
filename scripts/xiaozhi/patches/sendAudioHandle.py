@@ -270,7 +270,13 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
     if getattr(conn, "netease_music_wait_first_downlink", False):
         conn.netease_music_wait_first_downlink = False
         conn.netease_music_suppress_listen = False
-        conn.logger.bind(tag=TAG).info("网易云：首帧 Opus 已下行，解除 listen 抑制")
+        hold = bool(getattr(conn, "netease_music_hold_listen_until_wake", False))
+        gen = getattr(conn, "netease_loop_generation", None)
+        conn.logger.bind(tag=TAG).info(
+            "网易云：首帧 Opus 已下行，解除 listen 抑制（suppress=False）；"
+            f"hold_until_wake={hold} loop_gen={gen}（若随后 listen start 未抑制，"
+            "多为 hold 已为 False，见 listenMessageHandler 诊断行）"
+        )
 
     # 更新流控状态
     flow_control["packet_count"] = packet_index + 1
