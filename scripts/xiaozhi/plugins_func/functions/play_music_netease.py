@@ -1116,6 +1116,11 @@ async def _handle_netease_play(
             content_detail=placeholder,
         )
     )
+    # 占位口播一旦开始播放，设备常在「正在查找…」结束时就上报 listen start；若此时才置
+    # netease_music_hold_listen_until_wake（原先仅在下载成功之后），hold 仍为 False，会走
+    # reset_audio_states，用户看到先进聆听。故播歌意图一经确认即挂起自动聆听，失败路径须清除。
+    conn.netease_music_hold_listen_until_wake = True
+    conn.netease_music_suppress_listen = True
 
     # ② 网络请求
     song_id = None
@@ -1182,6 +1187,8 @@ async def _handle_netease_play(
                     content_type=ContentType.ACTION,
                 )
             )
+            conn.netease_music_hold_listen_until_wake = False
+            conn.netease_music_suppress_listen = False
             return  # 无需继续，直接结束本轮
 
     elif is_search_mode:
@@ -1287,11 +1294,9 @@ async def _handle_netease_play(
     if music_path:
         conn.netease_music_expect_delivery = True
         conn.netease_music_suppress_listen = True
-        # 播歌场景：口播结束后直至整首播完，均不因设备自动上报 listen start 而进「聆听」；
-        # 仅唤醒词（listen detect + wakeup_words / abort from_wake_word）会清除，见 listenMessageHandler、abortHandle。
-        conn.netease_music_hold_listen_until_wake = True
+        # hold_listen_until_wake 已在占位 TTS 入队后置 True
         conn.logger.bind(tag=TAG).info(
-            "[直连音乐] LAST 前已开启排播窗口（抑制 listen start 至首轮入队/超时/失败；播歌挂起聆听至唤醒词）"
+            "[直连音乐] LAST 前已开启排播窗口（expect_delivery；播歌挂起聆听至唤醒词）"
         )
 
     conn.tts.tts_text_queue.put(
@@ -1315,4 +1320,8 @@ async def _handle_netease_play(
                 loop_generation=loop_generation,
             )
         )
+    else:
+        conn.netease_music_hold_listen_until_wake = False
+        conn.netease_music_suppress_listen = False
+        conn.netease_music_expect_delivery = False
     conn.logger.bind(tag=TAG).info("播放流程完成（音乐由直连任务在 TTS 结束后下发）")

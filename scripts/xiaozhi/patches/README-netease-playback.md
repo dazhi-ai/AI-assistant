@@ -3,7 +3,7 @@
 ## 播歌 vs 聊天：何时进入「聆听」
 
 - **聊天 / 新闻 / 天气等**（未走网易云 `play_music` 成功入队）：不设置 `conn.netease_music_hold_listen_until_wake`，设备在口播结束后照常上报 `listen start`，服务端 `reset_audio_states`，与官方一致。
-- **播放歌曲**（`play_music` 已取得 `music_path` 并入队直连）：置 `conn.netease_music_hold_listen_until_wake = True`，在口播结束、整首播放及播放后，**忽略**设备自动上报的 `listen state=start`，避免因「假进聆听」打断排播；用户说**唤醒词**时，`listenMessageHandler` 在 `detect` 命中 `wakeup_words` 或 `abortHandle(..., from_wake_word=True)` 会清除该标志，之后 `listen start` 恢复正常。
+- **播放歌曲**：在 `_handle_netease_play` **占位 TTS（「正在查找…」）入队后即**置 `conn.netease_music_hold_listen_until_wake = True`（并 `suppress_listen`）。若仅在下载成功后才置位，占位口播结束到 `music_path` 就绪之间 `hold` 仍为假，设备会先 `listen start` 并进聆听。在口播、整首播放及播放后仍**忽略**自动 `listen state=start`；用户说**唤醒词**时，`listenMessageHandler` 在 `detect` 命中 `wakeup_words` 或 `abortHandle(..., from_wake_word=True)` 会清除该标志。无可用音频文件或歌单匹配失败等路径会清除 `hold`。
 
 须与 `listenMessageHandler.py`、`abortHandle.py`、`play_music_netease.py` 一并部署。
 
