@@ -256,6 +256,18 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
     packet_index = flow_control.get("packet_count", 0)
     sequence = flow_control.get("sequence", 0)
 
+    # 网易云首包：须先重锚 shield、再发 Opus、最后清 suppress，否则另一协程可能在
+    # suppress 已 False 而 shield_until 尚未写入时处理 listen start → 未抑制（见 16:25:50→52）。
+    _netease_first_opus = bool(getattr(conn, "netease_music_wait_first_downlink", False))
+    if _netease_first_opus:
+        _shield_sec = 15.0
+        try:
+            _prev_until = float(getattr(conn, "netease_music_shield_until", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            _prev_until = 0.0
+        _new_until = time.monotonic() + _shield_sec
+        conn.netease_music_shield_until = max(_prev_until, _new_until)
+
     if conn.conn_from_mqtt_gateway:
         # 计算时间戳（基于播放位置）
         start_time = time.time()
@@ -267,19 +279,9 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
 
     # 网易云直连：首帧 Opus 已实际下发到设备后，listenMessageHandler 才解除 listen start 抑制；
     # 音乐 FIRST 无负载，首包来自 MIDDLE，此处为真正「第一个音符」下行。
-    if getattr(conn, "netease_music_wait_first_downlink", False):
+    if _netease_first_opus:
         conn.netease_music_wait_first_downlink = False
         conn.netease_music_suppress_listen = False
-        # shield 在 play_music 入队时即计时，距首帧下行常差数秒～十余秒，防打断 15s 会在
-        # 「用户刚听到歌」之前就耗尽 → listenMessageHandler 侧 shield_active=False 仍走 reset（见 16:10:34）。
-        # 首帧真正发出后重新锚定，与可感知播放对齐（秒数与 NETEASE_MUSIC_ANTI_INTERRUPT_SEC 一致）。
-        _shield_sec = 15.0
-        try:
-            _prev_until = float(getattr(conn, "netease_music_shield_until", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            _prev_until = 0.0
-        _new_until = time.monotonic() + _shield_sec
-        conn.netease_music_shield_until = max(_prev_until, _new_until)
         hold = bool(getattr(conn, "netease_music_hold_listen_until_wake", False))
         gen = getattr(conn, "netease_loop_generation", None)
         conn.logger.bind(tag=TAG).info(
