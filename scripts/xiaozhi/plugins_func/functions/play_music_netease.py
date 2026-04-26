@@ -130,8 +130,9 @@ NETEASE_MUSIC_ANTI_INTERRUPT_SEC = 15.0
 
 # 从直连任务开始到此时间内须完成「首次写入 tts_audio_queue」；超时视为排队失败，
 # 解除聆听抑制并放弃本次下发（与 listenMessageHandler 补丁配合）。
-# 换歌后 TTS sentence_id 对齐可能略慢，10s 易误判失败，略放宽。
-NETEASE_MUSIC_QUEUE_TIMEOUT_SEC = 28.0
+# 换歌/多轮后火山 sentence_id、activate_session 对齐可能明显变慢；过短则直连放弃、
+# finally 会清 hold，用户只见公告口播后进聆听。实测第三次换歌起易触发，放宽到 50s。
+NETEASE_MUSIC_QUEUE_TIMEOUT_SEC = 50.0
 
 # 单曲循环时，估算每帧时长（秒）。与设备 hello 里 frame_duration=60 对齐。
 NETEASE_OPUS_FRAME_SEC = 60.0 / 1000.0

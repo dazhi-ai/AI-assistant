@@ -15,7 +15,7 @@
    上一首结束或换歌时设备会发 `abort`，`abortHandle` 置 `client_abort=True`。新一次 `_enqueue_music_opus_direct` 若在等待循环里立刻读到该标志会直接退出，公告口播已入队但 **Opus 未写入队列**。若此时 **`netease_music_hold_listen_until_wake` 抑制了 `listen start`**，可能不会走 `reset_audio_states`，abort 状态更易残留。插件在直连任务入口会 **清除 `client_abort`** 再打开发布。
 
 2. **直连排队超时过短**  
-   换歌后火山 `sentence_id` 对齐略慢时，原 10s 内未完成首次入队会放弃下发；已将 `NETEASE_MUSIC_QUEUE_TIMEOUT_SEC` 放宽（见 `play_music_netease.py`）。
+   换歌后火山 `sentence_id` / `activate_session` 对齐变慢时，超时内未完成首次入队会放弃下发，`finally` 会清 `hold`，表现为**公告口播播完、无歌声、再进聆听**；多轮换歌后更明显。`NETEASE_MUSIC_QUEUE_TIMEOUT_SEC` 已逐步提高（见 `play_music_netease.py`），仍偶发时可查日志是否出现 `[直连音乐] 排队列超过 …s 仍未入队`。
 
 3. **大模型分两轮**  
    首轮只文字应答「好的帮你换一首」、未调 `play_music`，需再说「播放」才出工具调用——与插件无关，可调 prompt 或工具策略。
