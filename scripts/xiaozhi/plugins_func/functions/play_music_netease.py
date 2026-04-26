@@ -1046,26 +1046,39 @@ async def _enqueue_music_opus_direct(
             )
             return
         conn.netease_music_expect_delivery = False
-        # 勿在「已成功入队且 netease_music_wait_first_downlink=True」时立刻清 suppress /
-        # wait_first：流控线程尚未经 WebSocket 发出首帧 Opus，设备若此时上报 listen start，
-        # listenMessageHandler 会 reset_audio_states，队列里大量 MIDDLE 尚未送出即被截断，
-        # 日志表现为 FIRST 与 LAST 紧挨、无「网易云：首帧 Opus 已下行」、用户侧无声只听进聆听。
-        if conn.stop_event.is_set() or getattr(conn, "client_abort", False):
+        # 连接关闭：必须全清，避免僵尸排播状态。
+        if conn.stop_event.is_set():
             log.info(
-                "[直连音乐] finally：因 stop 或 client_abort 清理 suppress/wait_first/hold；"
-                f"stop={conn.stop_event.is_set()} client_abort={getattr(conn, 'client_abort', False)} "
-                f"wait_first_downlink={getattr(conn, 'netease_music_wait_first_downlink', False)} "
+                "[直连音乐] finally：连接 stop，清理 suppress/wait_first/hold；"
                 f"title={title!r} loop_gen={loop_generation}"
             )
             conn.netease_music_suppress_listen = False
             conn.netease_music_wait_first_downlink = False
             conn.netease_music_hold_listen_until_wake = False
             return
+        # 首包已入队但尚未经 WebSocket 发出：必须优先于「仅 client_abort」分支。
+        # 否则口播结束瞬间设备误触 abort 时，旧逻辑会先清 hold → listen start 未抑制 → reset 截断整首
+        # （线上：wait_first=True 仍走 client_abort 全清，见诊断日志 15:56:37）。
         if getattr(conn, "netease_music_wait_first_downlink", False):
+            if getattr(conn, "client_abort", False):
+                log.info(
+                    "[直连音乐] finally：首包待下行期间存在 client_abort，保留 suppress/hold/wait_first，"
+                    "并清除 client_abort 以免发送线程跳过首帧 Opus"
+                )
+                conn.client_abort = False
             log.info(
                 "[直连音乐] finally：首包待下行，保留 suppress/hold；"
                 f"title={title!r} loop_gen={loop_generation}"
             )
+            return
+        if getattr(conn, "client_abort", False):
+            log.info(
+                "[直连音乐] finally：因 client_abort 清理 suppress/wait_first/hold（首包已下行或本轮未入队）；"
+                f"title={title!r} loop_gen={loop_generation}"
+            )
+            conn.netease_music_suppress_listen = False
+            conn.netease_music_wait_first_downlink = False
+            conn.netease_music_hold_listen_until_wake = False
             return
         log.info(
             "[直连音乐] finally：未等到首帧下行路径，清理 suppress/wait_first 并释放 hold；"

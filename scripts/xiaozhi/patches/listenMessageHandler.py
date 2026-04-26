@@ -25,6 +25,21 @@ from core.providers.asr.dto.dto import InterfaceType
 TAG = __name__
 
 
+def _netease_shield_active(conn: "ConnectionHandler") -> bool:
+    """
+    与 play_music 内 netease_music_shield_until 一致：首包后 ~15s 内设备常发 listen start；
+    若 hold 被异常清为假，仍勿 reset，避免截断正在下发的音乐（见线上 15:55:56 诊断）。
+    """
+    if getattr(conn, "client_listen_mode", None) == "manual":
+        return False
+    until = getattr(conn, "netease_music_shield_until", 0.0)
+    try:
+        until = float(until)
+    except (TypeError, ValueError):
+        return False
+    return until > 0.0 and time.monotonic() < until
+
+
 def _netease_listen_diag(conn: "ConnectionHandler") -> str:
     """网易云排播相关标志，便于对照「口播后进聆听」类问题。"""
     sup = bool(getattr(conn, "netease_music_suppress_listen", False))
@@ -34,9 +49,11 @@ def _netease_listen_diag(conn: "ConnectionHandler") -> str:
     gen = getattr(conn, "netease_loop_generation", None)
     abort = bool(getattr(conn, "client_abort", False))
     mode = getattr(conn, "client_listen_mode", None)
+    shield = _netease_shield_active(conn)
     return (
         f"suppress_listen={sup} hold_until_wake={hold} wait_first_downlink={wait_first} "
-        f"expect_delivery={expect} loop_gen={gen} client_abort={abort} listen_mode={mode!r}"
+        f"expect_delivery={expect} loop_gen={gen} client_abort={abort} listen_mode={mode!r} "
+        f"shield_active={shield}"
     )
 
 
@@ -56,11 +73,13 @@ class ListenTextMessageHandler(TextMessageHandler):
             # 超时由 play_music_netease 解除（见 NETEASE_MUSIC_QUEUE_TIMEOUT_SEC）。
             # 播歌场景（netease_music_hold_listen_until_wake）：口播与整首播放期间不因设备自动 listen start
             # 进聆听；仅唤醒词 detect 或唤醒词 abort 会清除该标志（聊天/新闻等不会置位，口播后仍正常进聆听）。
-            if getattr(conn, "netease_music_suppress_listen", False) or getattr(
-                conn, "netease_music_hold_listen_until_wake", False
+            if (
+                getattr(conn, "netease_music_suppress_listen", False)
+                or getattr(conn, "netease_music_hold_listen_until_wake", False)
+                or _netease_shield_active(conn)
             ):
                 conn.logger.bind(tag=TAG).info(
-                    "播歌排播或挂起聆听中，忽略本次 listen start；"
+                    "播歌排播、挂起聆听或防打断窗口内，忽略本次 listen start；"
                     + _netease_listen_diag(conn)
                 )
                 return
