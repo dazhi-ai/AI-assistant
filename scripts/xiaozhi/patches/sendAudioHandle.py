@@ -270,12 +270,21 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
     if getattr(conn, "netease_music_wait_first_downlink", False):
         conn.netease_music_wait_first_downlink = False
         conn.netease_music_suppress_listen = False
+        # shield 在 play_music 入队时即计时，距首帧下行常差数秒～十余秒，防打断 15s 会在
+        # 「用户刚听到歌」之前就耗尽 → listenMessageHandler 侧 shield_active=False 仍走 reset（见 16:10:34）。
+        # 首帧真正发出后重新锚定，与可感知播放对齐（秒数与 NETEASE_MUSIC_ANTI_INTERRUPT_SEC 一致）。
+        _shield_sec = 15.0
+        try:
+            _prev_until = float(getattr(conn, "netease_music_shield_until", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            _prev_until = 0.0
+        _new_until = time.monotonic() + _shield_sec
+        conn.netease_music_shield_until = max(_prev_until, _new_until)
         hold = bool(getattr(conn, "netease_music_hold_listen_until_wake", False))
         gen = getattr(conn, "netease_loop_generation", None)
         conn.logger.bind(tag=TAG).info(
             "网易云：首帧 Opus 已下行，解除 listen 抑制（suppress=False）；"
-            f"hold_until_wake={hold} loop_gen={gen}（若随后 listen start 未抑制，"
-            "多为 hold 已为 False，见 listenMessageHandler 诊断行）"
+            f"hold_until_wake={hold} loop_gen={gen} shield_until 已按首帧重锚至约 {_shield_sec:.0f}s 后"
         )
 
     # 更新流控状态
