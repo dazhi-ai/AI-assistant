@@ -130,7 +130,8 @@ NETEASE_MUSIC_ANTI_INTERRUPT_SEC = 15.0
 
 # 从直连任务开始到此时间内须完成「首次写入 tts_audio_queue」；超时视为排队失败，
 # 解除聆听抑制并放弃本次下发（与 listenMessageHandler 补丁配合）。
-NETEASE_MUSIC_QUEUE_TIMEOUT_SEC = 10.0
+# 换歌后 TTS sentence_id 对齐可能略慢，10s 易误判失败，略放宽。
+NETEASE_MUSIC_QUEUE_TIMEOUT_SEC = 28.0
 
 # 单曲循环时，估算每帧时长（秒）。与设备 hello 里 frame_duration=60 对齐。
 NETEASE_OPUS_FRAME_SEC = 60.0 / 1000.0
@@ -755,6 +756,11 @@ async def _enqueue_music_opus_direct(
     conn.netease_music_expect_delivery = True
     # 排队列期间服务端不处理客户端 listen start（见 listenMessageHandler 补丁）；首轮入队成功后立即解除。
     conn.netease_music_suppress_listen = True
+    # 曲终/换歌瞬间设备常发 abort，client_abort 会保持 True；listen 又被 hold 抑制时可能长期不清。
+    # 若不清除，本循环首判即「用户打断，取消播放」→ 仅有公告口播、无音乐，用户再说「继续播放」才触发新一轮。
+    if getattr(conn, "client_abort", False):
+        log.info("[直连音乐] 新一轮入队：清除残留的 client_abort（常见于换歌/曲终 abort 后）")
+    conn.client_abort = False
     queue_deadline = time.monotonic() + NETEASE_MUSIC_QUEUE_TIMEOUT_SEC
 
     def _queue_time_left() -> float:
