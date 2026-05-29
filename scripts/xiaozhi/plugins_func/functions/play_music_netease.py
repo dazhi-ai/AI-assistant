@@ -128,6 +128,11 @@ async def _netease_resume_prompt_worker(conn: "ConnectionHandler") -> None:
 # 用于降低唤醒词误触导致「歌刚开就断」；需与 core/handle/abortHandle.py 补丁配合部署。
 NETEASE_MUSIC_ANTI_INTERRUPT_SEC = 15.0
 
+# 首帧 Opus 实际下行后，绝对防打断窗口（秒）：期间忽略一切 abort（含 wake_word_detected），
+# 保证「找到歌曲后直接播放」且有最短稳定播放时长，杜绝「刚开播 1 秒就被切、用户感知无声」。
+# 由 sendAudioHandle._do_send_audio 在首帧下行时锚定 conn.netease_music_hard_block_until。
+NETEASE_MUSIC_HARD_BLOCK_SEC = 3.0
+
 # 从直连任务开始到此时间内须完成「首次写入 tts_audio_queue」；超时视为排队失败，
 # 解除聆听抑制并放弃本次下发（与 listenMessageHandler 补丁配合）。
 # 换歌/多轮后火山 sentence_id、activate_session 对齐可能明显变慢；过短则直连放弃、
@@ -965,43 +970,45 @@ async def _enqueue_music_opus_direct(
             log.info(
                 f"[直连音乐] 已切换 conn.sentence_id 用于音乐流控：{conn.sentence_id[:12]}…"
             )
-            conn.tts.tts_audio_queue.put((SentenceType.FIRST, None, title))
-            for chunk in opus_chunks:
-                conn.tts.tts_audio_queue.put((SentenceType.MIDDLE, chunk, title))
-            conn.tts.tts_audio_queue.put((SentenceType.LAST, [], None))
-            if single_loop:
-                shield_sec = max(
-                    NETEASE_MUSIC_ANTI_INTERRUPT_SEC, est_play_sec + shield_slack
-                )
-            else:
-                shield_sec = NETEASE_MUSIC_ANTI_INTERRUPT_SEC
+            # ★ 关键：所有防护标志必须在「入队 FIRST 之前」设置完成。消费 tts_audio_queue 的是
+            #   另一个线程（_audio_play_priority_thread），若先入队再设标志，该线程可能在标志生效前
+            #   就取走 FIRST 并处理 → sendAudioHandle 漏判 wait_first_downlink、不补发 tts start
+            #   → 设备停在聆听态、音乐无声（线上 19:10 一笑江湖即此竞态，缺少「补发 tts start」日志）。
+            # 防打断窗口覆盖整首估算时长（单曲循环与普通播放一致）：否则约 15s 后窗口失效，
+            # 设备误触的 wake_word_detected 又会立即清空队列断歌（线上 18:26 段在 4s、10s 处被切断）。
+            shield_sec = max(
+                NETEASE_MUSIC_ANTI_INTERRUPT_SEC, est_play_sec + shield_slack
+            )
             conn.netease_music_shield_until = time.monotonic() + shield_sec
+            # 队列尚未就绪即先置位；由 sendAudioHandle._do_send_audio 在首包真正发出后清除并解除 suppress。
+            conn.netease_music_wait_first_downlink = True
+            # 专用「补发 tts start」标志：仅由 sendAudioHandle 处理音乐 FIRST 时消费，_do_send_audio 绝不触碰，
+            # 避免被公告残留帧提前清掉而漏发 tts start（线上 19:14 无声根因）。
+            conn.netease_music_need_tts_start = True
             if single_loop:
                 conn.netease_resume_snapshot = {
                     "single_loop": True,
                     "music_path": music_path,
                     "title": title,
                 }
+            # 标志就绪后再入队，确保消费线程取到 FIRST 时各窗口标志均已生效
+            conn.tts.tts_audio_queue.put((SentenceType.FIRST, None, title))
+            for chunk in opus_chunks:
+                conn.tts.tts_audio_queue.put((SentenceType.MIDDLE, chunk, title))
+            conn.tts.tts_audio_queue.put((SentenceType.LAST, [], None))
             if loop_round == 0:
                 log.info(
                     f"[直连音乐] 下发设备：{title}，Opus帧数={len(opus_chunks)}，文件={music_path}"
                 )
                 log.info("[直连音乐] 已全部写入 tts_audio_queue")
                 log.info(
-                    f"[直连音乐] 已启用防打断约 {shield_sec:.0f}s"
-                    + (
-                        "（单曲循环：覆盖本首估算播放时长，避免误触 abort 断循环）"
-                        if single_loop
-                        else "（设备 abort 由服务端忽略，降误触）"
-                    )
+                    f"[直连音乐] 已启用防打断约 {shield_sec:.0f}s（覆盖整首估算时长）；"
+                    "首帧后 3s 绝对防打断（含唤醒词），其后单次唤醒词即可打断/换歌"
                 )
             else:
                 log.info(
                     f"[直连音乐] 单曲循环 第 {loop_round + 1} 轮已入队（帧数={len(opus_chunks)}）"
                 )
-            # 队列已就绪，但流控线程可能尚未下发首帧 Opus；由 sendAudioHandle._do_send_audio
-            # 在首包真正发出后清除 wait_first_downlink 并解除 suppress_listen。
-            conn.netease_music_wait_first_downlink = True
             return True
 
         if not _put_one_round(0):
@@ -1049,12 +1056,14 @@ async def _enqueue_music_opus_direct(
         # 连接关闭：必须全清，避免僵尸排播状态。
         if conn.stop_event.is_set():
             log.info(
-                "[直连音乐] finally：连接 stop，清理 suppress/wait_first/hold；"
+                "[直连音乐] finally：连接 stop，清理 suppress/wait_first/hold/hard_block；"
                 f"title={title!r} loop_gen={loop_generation}"
             )
             conn.netease_music_suppress_listen = False
             conn.netease_music_wait_first_downlink = False
             conn.netease_music_hold_listen_until_wake = False
+            conn.netease_music_hard_block_until = 0.0
+            conn.netease_music_need_tts_start = False
             return
         # 首包已入队但尚未经 WebSocket 发出：必须优先于「仅 client_abort」分支。
         # 否则口播结束瞬间设备误触 abort 时，旧逻辑会先清 hold → listen start 未抑制 → reset 截断整首
@@ -1079,6 +1088,8 @@ async def _enqueue_music_opus_direct(
             conn.netease_music_suppress_listen = False
             conn.netease_music_wait_first_downlink = False
             conn.netease_music_hold_listen_until_wake = False
+            conn.netease_music_hard_block_until = 0.0
+            conn.netease_music_need_tts_start = False
             return
         log.info(
             "[直连音乐] finally：未等到首帧下行路径，清理 suppress/wait_first 并释放 hold；"
@@ -1088,6 +1099,8 @@ async def _enqueue_music_opus_direct(
         conn.netease_music_wait_first_downlink = False
         # 未成功等到首帧入队（超时/编码失败等）：释放「仅唤醒词开麦」挂起
         conn.netease_music_hold_listen_until_wake = False
+        conn.netease_music_hard_block_until = 0.0
+        conn.netease_music_need_tts_start = False
 
 
 async def _handle_netease_play(

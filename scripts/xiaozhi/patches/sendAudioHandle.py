@@ -33,6 +33,22 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
         conn.tts.tts_audio_first_sentence = False
 
     if sentenceType == SentenceType.FIRST:
+        # 网易云直连音乐：公告口播的 LAST 已向设备发送 tts stop，设备已退出播放态、进入聆听
+        # （线上 18:51 复现：换歌/重下载使口播先结束，设备 listen start 进聆听）。
+        # 音乐与公告分属不同 TTS 会话，若音乐首句只发 sentence_start 而无 tts start，
+        # 设备不会重新进入播放态 → 音乐 Opus 已下发但无声、卡在聆听。
+        # 故音乐首句前补发一次 tts start，让设备从聆听态切回播放态；音乐结束的 LAST 会发 tts stop 收尾。
+        #
+        # 触发标志必须用专用的 netease_music_need_tts_start，绝不能复用 wait_first_downlink：
+        # 后者会被公告口播残留帧经 _do_send_audio 误判为「音乐首帧」而提前清除（线上 19:14 复现：
+        # 「首帧 Opus 已下行」出现在音乐 FIRST 之前、且漏发 tts start），导致设备停在聆听无声。
+        if getattr(conn, "netease_music_need_tts_start", False):
+            conn.netease_music_need_tts_start = False
+            await send_tts_message(conn, "start")
+            conn.client_is_speaking = True
+            conn.logger.bind(tag=TAG).info(
+                "网易云：音乐首句前补发 tts start，使设备从聆听态切回播放态"
+            )
         # 同一句子的后续消息加入流控队列，其他情况立即发送
         if (
             hasattr(conn, "audio_rate_controller")
@@ -282,11 +298,17 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
     if _netease_first_opus:
         conn.netease_music_wait_first_downlink = False
         conn.netease_music_suppress_listen = False
+        # 绝对防打断：自真正第一个音符下行起 3 秒内，abortHandle 忽略一切 abort（含 wake_word_detected），
+        # 确保「找到歌曲后直接播放」且有最短稳定播放时长（解决线上 18:26 段开播约 1s 即被 wake abort 切断、
+        # 用户感知无声的问题）。3 秒后由 abortHandle 的「二次唤醒确认」机制继续防误触。
+        _hard_block_sec = 3.0
+        conn.netease_music_hard_block_until = time.monotonic() + _hard_block_sec
         hold = bool(getattr(conn, "netease_music_hold_listen_until_wake", False))
         gen = getattr(conn, "netease_loop_generation", None)
         conn.logger.bind(tag=TAG).info(
             "网易云：首帧 Opus 已下行，解除 listen 抑制（suppress=False）；"
-            f"hold_until_wake={hold} loop_gen={gen} shield_until 已按首帧重锚至约 {_shield_sec:.0f}s 后"
+            f"hold_until_wake={hold} loop_gen={gen} shield_until 已按首帧重锚至约 {_shield_sec:.0f}s 后；"
+            f"已开启首帧后 {_hard_block_sec:.0f}s 绝对防打断（含唤醒词）"
         )
 
     # 更新流控状态
