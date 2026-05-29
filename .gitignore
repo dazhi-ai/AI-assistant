@@ -28,6 +28,9 @@ services/netease-api-enhanced/
 test_ark.py
 test_mysql_conn.py
 
+# 本地下载的服务器日志等临时文件（勿提交）
+tmp/
+
 # OS generated files
 Thumbs.db
 
